@@ -79,8 +79,30 @@
              filter: drop-shadow(0 3px 6px #0009); transform-origin: 100% 50%; }
   .pointer.tick { animation: tick .09s ease-out; }
   @keyframes tick { 50% { transform: translateY(-50%) rotate(-9deg); } }
-  .actions { flex: none; width: 230px; display: flex; flex-direction: column; align-items: stretch; gap: 16px;
-             padding-bottom: 2.4em; }
+  /* колонка на всю высоту: кнопка остаётся на прежнем месте (верхняя и нижняя зоны тянутся поровну,
+     нижняя на 2.4em больше — под высоту имени над кнопкой), таймер — посередине верхней зоны */
+  .actions { flex: none; align-self: stretch; width: 230px; display: flex; flex-direction: column;
+             align-items: stretch; gap: 16px; }
+  .timer-zone { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  .actions-end { flex: 1 1 2.4em; }
+  .timer { display: grid; justify-items: center; gap: 6px; }
+  .tlabel { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 3px; }
+  .tdisplay { font-size: 64px; font-weight: 300; line-height: 1.05; padding: 0 12px; border-radius: 14px;
+              font-family: "Segoe UI Light", "Segoe UI", system-ui, sans-serif; letter-spacing: 1px;
+              background: transparent; font-variant-numeric: tabular-nums; }
+  .tdisplay:hover { background: var(--panel2); }
+  .timer.running .tdisplay { color: var(--accent2); }
+  .timer.urgent .tdisplay { color: var(--danger); animation: urgent 1s ease-in-out infinite; }
+  .timer.done .tdisplay { color: var(--danger); }
+  .treset { padding: 5px 12px; font-size: 12px; font-weight: 500; color: var(--muted); background: transparent;
+            box-shadow: inset 0 0 0 1px var(--line); }
+  #spin.call { animation: call 1.2s ease-in-out infinite; }
+  @keyframes call { 50% { box-shadow: 0 0 0 6px #7c5cff55, 0 8px 50px #a855f7cc; transform: scale(1.03); } }
+  @keyframes urgent { 50% { transform: scale(1.07); } }
+  #timerInput { width: 160px; font-size: 30px; font-weight: 700; text-align: center; padding: 4px 8px; }
+  .tbtns { display: flex; gap: 6px; }
+  .tbtns button { padding: 7px 10px; font-size: 13px; }
+  #timerToggle { min-width: 46px; }
   #again { font-size: 13px; padding: 12px 10px; transition: opacity .3s, transform .12s, filter .15s; }
   #again.off { opacity: 0; pointer-events: none; }   /* место под кнопку занято всегда, чтобы ничего не прыгало */
   .actions .dur { justify-content: center; margin-top: 10px; }
@@ -153,7 +175,7 @@
     .wheel-box { width: 86vw; margin-left: 0; }
     .side { max-height: 80vh; }
   }
-  @media (prefers-reduced-motion: reduce) { .lot, .card, .overlay, #winAva::before { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .lot, .card, .overlay, #winAva::before, #spin.call, .timer.urgent .tdisplay { animation: none; } }
 </style>
 </head>
 <body>
@@ -189,12 +211,27 @@
       </div>
       <i class="gap"></i>
       <div class="actions">
+        <div class="timer-zone">
+          <div class="timer" id="timer">
+            <div class="tlabel">До крутки</div>
+            <button class="tdisplay" id="timerDisplay" title="Нажмите, чтобы ввести время: 5 — пять минут, 2:30 — две с половиной">10:00</button>
+            <input type="text" id="timerInput" name="timerInput" hidden autocomplete="off"
+                   title="Минуты (5) или минуты:секунды (2:30). Enter — применить, Esc — отмена">
+            <div class="tbtns">
+              <button id="timerMinus" title="Убавить минуту">−1 мин</button>
+              <button id="timerToggle" class="primary" title="Запустить отсчёт — на нуле барабан закрутится сам">▶</button>
+              <button id="timerPlus" title="Добавить минуту">+1 мин</button>
+            </div>
+            <button class="treset" id="timerReset" disabled title="Остановить и вернуть время, с которого начинали">↺ Сброс</button>
+          </div>
+        </div>
         <div class="current" id="current"></div>
         <button id="spin" class="primary" disabled title="Раскрутить колесо и выбрать случайного участника">Крутить барабан!</button>
     <button id="again" class="off" title="Перенести победителя в «Убранные» и сразу раскрутить снова">Убрать победителя и крутить ещё раз</button>
     <label class="dur" title="Сколько секунд крутится колесо. Влияет только на анимацию, не на выбор победителя">
       Длительность, с <input type="number" id="dur" name="dur" min="1" max="300" step="1" value="9">
     </label>
+        <i class="actions-end"></i>
       </div>
       <i class="gap"></i>
     </div>
@@ -284,7 +321,7 @@ function hasPhrase(text, phraseNorm) {   // фраза целыми словам
 
 /* ---------- участники из сообщений (общее для всех источников) ---------- */
 let pending = [];       // сообщения, пришедшие во время вращения колеса
-let renderTimer = 0;
+let listRenderTimer = 0;   // отложенная перерисовка списка при потоке сообщений
 
 // messages: [{key, name, username, avatar, text}] -> {matched, added}
 function addMessages(messages) {
@@ -304,7 +341,7 @@ function addMessages(messages) {
     p.name = m.name || p.name;
     p.avatar = m.avatar || p.avatar;
   }
-  if (matched && !renderTimer) renderTimer = setTimeout(() => { renderTimer = 0; render(); }, 400);
+  if (matched && !listRenderTimer) listRenderTimer = setTimeout(() => { listRenderTimer = 0; render(); }, 400);
   return { matched, added };
 }
 
@@ -663,9 +700,87 @@ function spinEase(t) {
   return (CRUISE + k * (s - s * s * s / 3)) / total;   // интеграл cos^3
 }
 
+/* ---------- таймер до крутки ---------- */
+// Только отсчёт: крутку всегда запускает пользователь. На нуле таймер останавливается и подсвечивает кнопку.
+const TIMER_DEFAULT_SEC = 600;
+const TIMER_MAX_SEC = 99 * 3600 + 59 * 60 + 59;
+let timerSet = TIMER_DEFAULT_SEC;            // с какого времени начинается отсчёт (к нему возвращает «Сброс»)
+let timerLeftMs = TIMER_DEFAULT_SEC * 1000;  // остаток, пока таймер стоит
+let timerDeadline = 0, timerTick = 0;        // когда закончится, если идёт
+let timerStarted = false;                    // отсчёт начат (идёт или на паузе) — правки меняют только остаток
+let timerAlert = false;                      // время вышло, барабан ещё не крутили — кнопка мигает
+
+function timerRemainingMs() { return timerDeadline ? Math.max(0, timerDeadline - Date.now()) : timerLeftMs; }
+function fmtTime(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60, p = n => String(n).padStart(2, '0');
+  return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+}
+function parseTime(text) {                   // "5" — минуты, "2:30" — мин:сек, "1:00:00" — ч:мин:сек
+  const parts = text.trim().replace(/[.,]/g, ':').split(':');
+  if (parts.length > 3 || !parts.every(p => /^\d+$/.test(p.trim()))) return null;
+  const n = parts.map(Number);
+  const sec = n.length === 1 ? n[0] * 60 : n.length === 2 ? n[0] * 60 + n[1] : n[0] * 3600 + n[1] * 60 + n[2];
+  return Math.min(sec, TIMER_MAX_SEC);
+}
+function renderTimer() {
+  const sec = Math.ceil(timerRemainingMs() / 1000), running = !!timerDeadline, done = timerStarted && sec === 0;
+  $('timerDisplay').textContent = fmtTime(sec);
+  $('timer').classList.toggle('running', running);
+  $('timer').classList.toggle('urgent', running && sec <= 10);
+  $('timer').classList.toggle('done', done);
+  $('spin').classList.toggle('call', timerAlert);  // время вышло — кнопка зовёт крутить
+  $('timerToggle').textContent = running ? '⏸' : '▶';
+  $('timerToggle').title = running ? 'Пауза' : 'Запустить отсчёт';
+  $('timerToggle').disabled = !running && sec === 0;
+  $('timerMinus').disabled = sec === 0;
+  $('timerReset').disabled = !timerStarted;
+}
+function setTimerMs(ms) {                    // новое время; идёт таймер или стоит — не меняется
+  ms = Math.max(0, Math.min(ms, TIMER_MAX_SEC * 1000));
+  if (timerDeadline) timerDeadline = Date.now() + ms;
+  else timerLeftMs = ms;
+  if (!timerStarted) { timerSet = Math.ceil(ms / 1000); saved('timer', timerSet); }
+  renderTimer();
+  if (timerDeadline && ms === 0) timerFinished();
+}
+function toggleTimer() {
+  if (timerDeadline) {                       // пауза
+    timerLeftMs = timerRemainingMs(); timerDeadline = 0; clearInterval(timerTick);
+  } else {
+    if (timerLeftMs <= 0) return;
+    timerStarted = true;
+    timerDeadline = Date.now() + timerLeftMs;
+    timerTick = setInterval(() => { renderTimer(); if (!timerRemainingMs()) timerFinished(); }, 200);
+  }
+  renderTimer();
+}
+function resetTimer() {                      // остановить и вернуть время, с которого начинали
+  clearInterval(timerTick); timerDeadline = 0; timerStarted = false; timerAlert = false; timerLeftMs = timerSet * 1000;
+  renderTimer();
+}
+function timerFinished() {
+  clearInterval(timerTick); timerDeadline = 0; timerLeftMs = 0; timerAlert = true;
+  renderTimer();
+  setStatus('Время вышло — можно крутить барабан!');
+}
+function editTimer() {
+  const input = $('timerInput');
+  input.value = fmtTime(Math.ceil(timerRemainingMs() / 1000));
+  $('timerDisplay').hidden = true; input.hidden = false;
+  input.focus(); input.select();
+}
+function finishEditTimer(apply) {
+  const input = $('timerInput');
+  if (input.hidden) return;
+  const sec = apply ? parseTime(input.value) : null;
+  input.hidden = true; $('timerDisplay').hidden = false;
+  if (sec !== null) setTimerMs(sec * 1000);
+}
+
 function spin() {
   const n = participants.length;
   if (spinning || n < 2) return;
+  if (timerAlert) { timerAlert = false; renderTimer(); }      // крутку запустили — кнопка больше не мигает
   for (const id of Object.keys(listeners)) stopListen(id);   // на время розыгрыша приём участников закрыт
   spinning = true; winner = null;
   render();
@@ -835,8 +950,24 @@ function addManual() {
   render();
 }
 $('manualAdd').onclick = addManual;
+$('timerDisplay').onclick = editTimer;
+$('timerInput').onkeydown = e => {
+  if (e.key === 'Enter') finishEditTimer(true);
+  if (e.key === 'Escape') finishEditTimer(false);
+};
+$('timerInput').onblur = () => finishEditTimer(true);
+$('timerToggle').onclick = toggleTimer;
+$('timerPlus').onclick = () => setTimerMs(timerRemainingMs() + 60000);
+$('timerMinus').onclick = () => setTimerMs(timerRemainingMs() - 60000);
+$('timerReset').onclick = resetTimer;
+
 function restoreSaved() {
   $('dur').value = saved('dur') || DEFAULT_SPIN_SEC;
+  if (!timerDeadline) {
+    timerSet = Math.min(TIMER_MAX_SEC, +saved('timer') || TIMER_DEFAULT_SEC);
+    timerLeftMs = timerSet * 1000;
+    renderTimer();
+  }
   for (const id of Object.keys(SOURCES)) if (!listeners[id]) $(id + 'Url').value = saved(id + 'Url');
   $('yt').value = saved('yt');
   setMusic();

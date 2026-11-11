@@ -17,8 +17,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP_NAME = "Крутка Vilknz (Vilknz prize wheel)"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+APP_ID = "vilknz-prize-wheel"
 HOST, PORT = "127.0.0.1", 8765
+PORT_TRIES = 20  # если 8765 занят чужой программой, пробуем следующие порты
 # В собранном exe (PyInstaller) файлы лежат во временной папке sys._MEIPASS.
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 PAGE_LIMIT = 100     # комментариев на один запрос к виджету (максимум у t.me)
@@ -296,6 +298,7 @@ def stream_avatar(source, link):
 
 
 API = {
+    "/api/ping": lambda q: {"app": APP_ID, "version": VERSION},
     "/api/collect": lambda q: collect(q.get("url", "")),
     "/api/avatar": lambda q: {"avatar": stream_avatar(q.get("source", ""), q.get("link", ""))},
     "/api/yt/open": lambda q: yt_open(q.get("url", "")),
@@ -304,22 +307,72 @@ API = {
 
 
 class Server(ThreadingHTTPServer):
+    # На Windows SO_REUSEADDR позволяет второй копии программы занять тот же порт,
+    # и проверка «программа уже запущена» не срабатывает. Поэтому повторное использование отключено.
+    allow_reuse_address = sys.platform != "win32"
+
     def handle_error(self, request, client_address):
         # браузер оборвал соединение (обновление или закрытие страницы) — это не ошибка
         if not isinstance(sys.exc_info()[1], ConnectionError):
             super().handle_error(request, client_address)
 
 
-def main():
+CONSOLE_TEXT = """
+  {name} {version}
+
+  Программа работает. Её страница открылась в браузере:
+      {url}
+  (если не открылась — скопируйте этот адрес в браузер)
+
+  ┌──────────────────────────────────────────────────────────────┐
+  │  НЕ ЗАКРЫВАЙТЕ ЭТО ОКНО, пока проводите розыгрыш.            │
+  │  Без него страница не сможет собирать участников из          │
+  │  Telegram и YouTube.                                         │
+  │                                                              │
+  │  Закройте окно, когда розыгрыш закончен, — программа         │
+  │  выключится. Сворачивать окно можно.                         │
+  └──────────────────────────────────────────────────────────────┘
+"""
+
+
+def is_our_app(port):
+    """Отвечает ли на этом порту уже запущенная копия программы (а не чужая)."""
     try:
-        server = Server((HOST, PORT), Handler)
-    except OSError:
-        print(f"Порт {PORT} занят — похоже, программа уже запущена. Открываю страницу.")
-        webbrowser.open(f"http://{HOST}:{PORT}/")
+        with urllib.request.urlopen(f"http://{HOST}:{port}/api/ping", timeout=2) as resp:
+            return json.load(resp).get("app") == APP_ID
+    except (OSError, ValueError):
+        return False
+
+
+def main():
+    if sys.stdout:
+        sys.stdout.reconfigure(errors="replace")  # рамка не должна ронять запуск, если консоль не умеет UTF-8
+    # Порт 8765, а если он занят чужой программой — следующий свободный.
+    for port in range(PORT, PORT + PORT_TRIES):
+        try:
+            server = Server((HOST, port), Handler)
+            break
+        except OSError:
+            if is_our_app(port):
+                print("Программа уже запущена в другом окне — открываю её страницу в браузере.")
+                print("Это окно закроется само.")
+                webbrowser.open(f"http://{HOST}:{port}/")
+                time.sleep(3)
+                return
+    else:
+        print(f"Не удалось запустить: порты {PORT}–{PORT + PORT_TRIES - 1} заняты другими программами.")
+        print("Закройте лишние программы и запустите снова. Окно закроется через 30 секунд.")
+        time.sleep(30)
         return
-    print(f"{APP_NAME} {VERSION} запущена: http://{HOST}:{PORT}/")
-    print("Страница откроется в браузере. Закройте это окно, чтобы остановить программу.")
-    threading.Timer(0.5, webbrowser.open, [f"http://{HOST}:{PORT}/"]).start()
+    url = f"http://{HOST}:{port}/"
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} — не закрывайте, пока идёт розыгрыш")
+    print(CONSOLE_TEXT.format(name=APP_NAME, version=VERSION, url=url))
+    if port != PORT:
+        print(f"  Порт {PORT} занят другой программой, поэтому выбран {port}.")
+        print("  Ссылки и настройки, сохранённые на прошлом порту, здесь не видны.\n")
+    threading.Timer(0.5, webbrowser.open, [url]).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
