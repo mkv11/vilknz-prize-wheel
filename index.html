@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Крутка Vilknz</title>
+<style>
+  :root {
+    --bg: #0e1016; --panel: #171a23; --panel2: #1f2330; --line: #2a2f3f;
+    --text: #eceef4; --muted: #8b91a5; --accent: #7c5cff; --accent2: #22d3ee; --danger: #ff5c7a;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; color: var(--text); font: 15px/1.4 "Segoe UI", system-ui, sans-serif;
+    background: radial-gradient(1200px 700px at 30% -10%, #1d1840 0%, transparent 60%),
+                radial-gradient(900px 600px at 100% 100%, #0c2a36 0%, transparent 55%), var(--bg);
+    background-attachment: fixed;
+  }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; border-radius: 10px; padding: 10px 16px; font-weight: 600;
+           background: var(--panel2); transition: transform .12s, filter .15s, background .15s, opacity .15s; }
+  button:hover:not(:disabled) { filter: brightness(1.2); transform: translateY(-1px); }
+  button:active:not(:disabled) { transform: translateY(0) scale(.98); }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { background: linear-gradient(135deg, var(--accent), #a855f7); }
+  input[type=text] { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+                     padding: 10px 12px; outline: none; min-width: 0; transition: border-color .15s, box-shadow .15s; }
+  input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #7c5cff33; }
+
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; height: 100vh; padding: 18px; }
+  /* clip: углы вращающегося квадратного холста не должны создавать прокрутку страницы */
+  .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 12px; overflow: clip; }
+  .top { display: flex; gap: 8px; align-items: flex-start; }
+  .bar { flex: 1; min-width: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+  .bar input { flex: 1 1 220px; }
+  #streamBar { flex-direction: column; flex-wrap: nowrap; }
+  .src { display: flex; gap: 8px; align-items: center; }
+  .src button { width: 190px; white-space: nowrap; }
+  .src button.on { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--danger); }
+  .live { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .live.on::before { content: "●"; color: #34d399; margin-right: 6px; animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .top #phrase { flex: 0 1 240px; }
+  .author { display: flex; justify-content: flex-end; gap: 14px; padding: 6px 12px; border-top: 1px solid var(--line); }
+  .author a { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; text-decoration: none;
+              opacity: .6; transition: opacity .15s; }
+  .author a:hover { opacity: 1; }
+  .author img { width: 14px; height: 14px; border-radius: 3px; }
+  .tabs { display: flex; gap: 6px; padding: 10px 10px 0; }
+  .tab { flex: 1; padding: 8px; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+  .tab.active { color: var(--text); background: linear-gradient(135deg, var(--accent), #a855f7); box-shadow: none; }
+  #clear { font-size: 12px; font-weight: 500; margin-left: 6px; }
+  .status { position: absolute; left: 0; top: 0; color: var(--muted); font-size: 14px; }
+  .status.err { color: var(--danger); }
+
+  /* имя под стрелкой — над кнопкой; высота фиксирована на две строки, чтобы кнопка не прыгала */
+  .current { text-align: center; font-size: 22px; font-weight: 700; line-height: 1.2; height: 2.4em; overflow: hidden;
+             display: flex; align-items: flex-end; justify-content: center; overflow-wrap: anywhere; }
+  /* ряд: колесо и блок кнопки; одинаковые промежутки .gap ставят кнопку посередине между колесом и списком */
+  .wheel-area { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; container-type: size; }
+  .gap { flex: 1; }
+  .actions + .gap { margin-left: -18px; }   /* учитываем отступ между колонками, чтобы промежутки были равны */
+  /* колесо не кликается и не выделяется — иначе в центре может встать мигающий текстовый курсор */
+  /* колесо стоит по центру области слева от колонки кнопки (ширина колонки 230px + отступ 18px),
+     а блок кнопки — посередине между колесом и списком */
+  .wheel-box { --d: min(100cqw - 340px, 84cqh); position: relative; flex: none; width: var(--d); aspect-ratio: 1;
+               margin-left: calc((100cqw - 248px - var(--d)) / 2);
+               pointer-events: none; user-select: none; caret-color: transparent; }
+  #wheel { width: 100%; height: 100%; border-radius: 50%; display: block; will-change: transform;
+           box-shadow: 0 0 0 6px #ffffff14, 0 20px 60px #000a, 0 0 80px #7c5cff30; }
+  .hub { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%, -50%);
+         border-radius: 50%; background: var(--panel) center/cover; border: 5px solid #fff;
+         box-shadow: 0 6px 24px #000a; display: grid; place-items: center; font-size: 28px; }
+  .pointer { position: absolute; right: -26px; top: 50%; width: 0; height: 0; transform: translateY(-50%);
+             border: 18px solid transparent; border-right: 40px solid #fff; border-left: 0;
+             filter: drop-shadow(0 3px 6px #0009); transform-origin: 100% 50%; }
+  .pointer.tick { animation: tick .09s ease-out; }
+  @keyframes tick { 50% { transform: translateY(-50%) rotate(-9deg); } }
+  .actions { flex: none; width: 230px; display: flex; flex-direction: column; align-items: stretch; gap: 16px;
+             padding-bottom: 2.4em; }
+  #again { font-size: 13px; padding: 12px 10px; transition: opacity .3s, transform .12s, filter .15s; }
+  #again.off { opacity: 0; pointer-events: none; }   /* место под кнопку занято всегда, чтобы ничего не прыгало */
+  .actions .dur { justify-content: center; margin-top: 10px; }
+  .dur { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .dur input { width: 72px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+               padding: 8px 10px; outline: none; }
+  .dur input:focus { border-color: var(--accent); }
+  .music { border-top: 1px solid var(--line); padding: 10px; display: grid; gap: 8px; }
+  .music input { flex: 1; min-width: 0; }
+  #ytFrame { width: 100%; height: 150px; border: 0; border-radius: 10px; display: block; background: #000; }
+  #spin { font-size: 30px; line-height: 1.15; padding: 30px 16px; border-radius: 28px; box-shadow: 0 8px 30px #7c5cff55; }
+
+  .side { background: #171a23cc; backdrop-filter: blur(8px); border: 1px solid var(--line); border-radius: var(--radius);
+          display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .side-head { padding: 14px 14px 10px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+  .side-title { display: flex; align-items: baseline; justify-content: space-between; font-weight: 700; font-size: 16px; }
+  .side-title span { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .add { display: flex; gap: 8px; }
+  .add input { flex: 1; }
+  .list { flex: 1; overflow-y: auto; padding: 8px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  .lot { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px;
+         animation: rowIn .22s ease-out both; transition: background .12s; }
+  .lot:hover { background: var(--panel2); }
+  @keyframes rowIn { from { opacity: 0; transform: translateY(4px); } }
+  .ava { width: 30px; height: 30px; border-radius: 50%; flex: none; object-fit: cover; display: grid; place-items: center;
+         font-weight: 700; font-size: 13px; color: #fff; }
+  .lot .who { flex: 1; min-width: 0; }
+  .avawrap { position: relative; flex: none; display: flex; }
+  .srcbadge { position: absolute; right: -4px; bottom: -3px; width: 15px; height: 15px; border-radius: 5px;
+              box-shadow: 0 0 0 2px var(--panel); display: flex; }
+  .srcbadge svg { width: 100%; height: 100%; }
+  .lot .name, .lot .user { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lot .user { color: var(--muted); font-size: 12px; }
+  .badge { color: var(--muted); font-size: 12px; background: var(--panel2); border-radius: 999px; padding: 1px 8px; }
+  .icon { padding: 4px 9px; background: transparent; color: var(--muted); border-radius: 8px; }
+  .icon:hover:not(:disabled) { background: #ff5c7a22; color: var(--danger); }
+  .icon.back:hover:not(:disabled) { background: #22d3ee22; color: var(--accent2); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 16px; }
+  .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px;
+           border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .pager button { padding: 5px 12px; }
+  details.removed { border-top: 1px solid var(--line); max-height: 35%; overflow-y: auto; }
+  details.removed summary { padding: 10px 14px; cursor: pointer; color: var(--muted); font-size: 13px; }
+  details.removed .lot { opacity: .7; margin: 0 8px; }
+
+  .overlay { position: fixed; inset: 0; background: #06070bf0; display: grid;
+             place-items: center; z-index: 10; animation: fade .25s ease-out; overflow: hidden; cursor: pointer; }
+  .overlay[hidden] { display: none; }
+  @keyframes fade { from { opacity: 0; } }
+  #fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .card { position: relative; text-align: center; max-width: min(92vw, 900px); padding: 20px;
+          animation: pop .6s cubic-bezier(.2, 1.5, .4, 1); }
+  @keyframes pop { from { opacity: 0; transform: scale(.6); } }
+  .card .label { color: #fff; text-transform: uppercase; letter-spacing: 6px; font-size: 18px; opacity: .85; }
+  #winAva { position: relative; width: 180px; height: 180px; margin: 22px auto 18px; }
+  #winAva::before { content: ""; position: absolute; inset: -60px; border-radius: 50%; will-change: opacity, transform;
+                    background: radial-gradient(closest-side, #7c5cffcc 55%, #22d3ee55 75%, transparent);
+                    animation: glow 1.8s ease-in-out infinite alternate; }
+  @keyframes glow { from { opacity: .55; transform: scale(.92); } to { opacity: 1; transform: scale(1.08); } }
+  .card .ava { position: relative; width: 180px; height: 180px; font-size: 76px; box-shadow: 0 0 0 6px #fff; }
+  .card .wname { font-size: clamp(40px, 6vw, 76px); font-weight: 800; line-height: 1.1; overflow-wrap: anywhere;
+                 text-shadow: 0 4px 30px #000; }
+  .card .wuser { color: var(--accent2); font-size: 26px; margin-top: 8px; text-shadow: 0 2px 12px #000; }
+  .card .hint { color: var(--muted); font-size: 13px; margin-top: 28px; }
+
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; height: auto; }
+    #spin { font-size: 24px; padding: 20px 16px; }
+    .wheel-area { flex: none; flex-direction: column; gap: 14px; padding-top: 28px; container-type: normal; }
+    .wheel-box { width: 86vw; margin-left: 0; }
+    .side { max-height: 80vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { .lot, .card, .overlay, #winAva::before { animation: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <main class="stage">
+    <div class="top">
+      <div class="bar" id="tgBar">
+        <input type="text" id="url" name="url" placeholder="Ссылка на пост: https://t.me/канал/123" autocomplete="off">
+        <button id="collect" class="primary" title="Очистить список и собрать с этой ссылки">Собрать заново</button>
+        <button id="append" title="Добавить участников с этой ссылки к уже собранным">Добавить</button>
+      </div>
+      <div class="bar" id="streamBar" hidden>
+        <div class="src">
+          <input type="text" id="twitchUrl" name="twitchUrl" placeholder="Twitch: twitch.tv/канал" autocomplete="off">
+          <span class="live" id="twitchLive"></span>
+          <button id="twitchBtn" class="primary" title="Подключиться к чату Twitch и добавлять в участники тех, кто пишет">Слушать чат Twitch</button>
+        </div>
+        <div class="src">
+          <input type="text" id="youtubeUrl" name="youtubeUrl" placeholder="YouTube: ссылка на идущую трансляцию" autocomplete="off">
+          <span class="live" id="youtubeLive"></span>
+          <button id="youtubeBtn" class="primary" title="Подключиться к чату трансляции YouTube и добавлять в участники тех, кто пишет">Слушать чат YouTube</button>
+        </div>
+      </div>
+      <input type="text" id="phrase" name="phrase" placeholder="Ключевая фраза (необязательно)" autocomplete="off"
+             title="Если заполнено — участвуют только те, кто написал эту фразу. Без фразы участвуют все, кто написал что угодно. Регистр не важен, русские и английские буквы равнозначны: itr = ИТР = итр">
+    </div>
+    <div class="wheel-area">
+      <div class="status" id="status">Вставьте ссылку на пост и нажмите «Собрать заново».</div>
+      <div class="wheel-box">
+        <canvas id="wheel" width="1200" height="1200"></canvas>
+        <div class="hub" id="hub">🎁</div>
+        <div class="pointer" id="pointer"></div>
+      </div>
+      <i class="gap"></i>
+      <div class="actions">
+        <div class="current" id="current"></div>
+        <button id="spin" class="primary" disabled title="Раскрутить колесо и выбрать случайного участника">Крутить барабан!</button>
+    <button id="again" class="off" title="Перенести победителя в «Убранные» и сразу раскрутить снова">Убрать победителя и крутить ещё раз</button>
+    <label class="dur" title="Сколько секунд крутится колесо. Влияет только на анимацию, не на выбор победителя">
+      Длительность, с <input type="number" id="dur" name="dur" min="1" max="300" step="1" value="9">
+    </label>
+      </div>
+      <i class="gap"></i>
+    </div>
+  </main>
+
+  <aside class="side">
+    <div class="tabs">
+      <button class="tab" id="tabTg" title="Собрать участников из комментариев к посту Telegram">Телеграм</button>
+      <button class="tab" id="tabStream" title="Собирать участников из чатов идущих трансляций">Стриминги</button>
+    </div>
+    <div class="side-head">
+      <div class="side-title">Участники
+        <span><span id="count">0</span>
+          <button class="icon" id="clear" title="Очистить список участников и убранных">Очистить</button></span>
+      </div>
+      <div class="add">
+        <input type="text" id="manual" name="manual" placeholder="Добавить вручную" autocomplete="off">
+        <button id="manualAdd" title="Добавить участника с введённым именем">+</button>
+      </div>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="pager" id="pager" hidden>
+      <button id="prev" title="Предыдущая страница">←</button><span id="pageInfo"></span><button id="next" title="Следующая страница">→</button>
+    </div>
+    <div class="music">
+      <div class="add">
+        <input type="text" id="yt" name="yt" placeholder="Ссылка на YouTube — звук розыгрыша" autocomplete="off"
+               title="Видео с YouTube: включается при нажатии «Крутить барабан!» и ставится на паузу, когда закрываете окно победителя">
+        <button class="icon" id="ytClear" hidden title="Убрать ролик — розыгрыш будет без звука">🗑</button>
+      </div>
+      <div id="ytBox" hidden><iframe id="ytFrame" allow="autoplay; encrypted-media" title="YouTube"></iframe></div>
+    </div>
+    <details class="removed" id="removedBox" hidden>
+      <summary id="removedTitle"></summary>
+      <div id="removedList"></div>
+    </details>
+    <div class="author">
+      <a href="https://boosty.to/vilknz" target="_blank" rel="noopener" title="Автор на Boosty">
+        <img src="https://boosty.to/favicon.ico" alt="" referrerpolicy="no-referrer" onerror="this.remove()">boosty.to/vilknz</a>
+      <a href="https://t.me/Vilknz/" target="_blank" rel="noopener" title="Канал автора в Telegram">
+        <img src="https://telegram.org/favicon.ico" alt="" referrerpolicy="no-referrer" onerror="this.remove()">t.me/Vilknz</a>
+    </div>
+  </aside>
+</div>
+
+<div class="overlay" id="overlay" hidden title="Нажмите, чтобы закрыть">
+  <canvas id="fx"></canvas>
+  <div class="card">
+    <div class="label">Победитель</div>
+    <div id="winAva"></div>
+    <div class="wname" id="winName"></div>
+    <div class="wuser" id="winUser"></div>
+    <div class="hint">нажмите, чтобы закрыть</div>
+  </div>
+</div>
+
+<script>
+const PAGE_SIZE = 50;          // лотов на странице списка
+const WHEEL_AVATAR_MAX = 50;   // при большем числе участников аватарки с колеса убираются
+const DEFAULT_SPIN_SEC = 9;
+const MUSIC_DELAY_MS = 1000;
+const COLORS = ['#7c5cff', '#22d3ee', '#f472b6', '#facc15', '#34d399', '#fb923c',
+                '#60a5fa', '#e879f9', '#a3e635', '#f87171', '#2dd4bf', '#c084fc'];
+const TAU = Math.PI * 2;
+const $ = id => document.getElementById(id);
+
+// participant: {key, name, username, avatar, count}
+let participants = [], removed = [];
+let page = 0, rotation = 0, spinning = false, winner = null, manualSeq = 0;
+
+/* ---------- ключевая фраза ---------- */
+// Транслитерация для сравнения: "итр" == "itr", "амогус" == "amogus".
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'i', к: 'k',
+  л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch',
+  ш: 'sh', щ: 'sch', ъ: '', ы: 'i', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+// Разные латинские написания одного звука сводим к одному виду.
+const LATIN_VARIANTS = [['shch', 'sch'], ['kh', 'h'], ['x', 'ks'], ['w', 'v'], ['j', 'i'], ['y', 'i']];
+
+function normalize(text) {      // слова в нижнем регистре и латинице через пробел: 'ИТР!' -> 'itr'
+  let t = [...text.toLowerCase()].map(ch => TRANSLIT[ch] ?? ch).join('');
+  for (const [from, to] of LATIN_VARIANTS) t = t.replaceAll(from, to);
+  return (t.match(/[a-z0-9]+/g) || []).join(' ');
+}
+function hasPhrase(text, phraseNorm) {   // фраза целыми словами, а не частью другого слова
+  return ` ${normalize(text)} `.includes(` ${phraseNorm} `);
+}
+
+/* ---------- участники из сообщений (общее для всех источников) ---------- */
+let pending = [];       // сообщения, пришедшие во время вращения колеса
+let renderTimer = 0;
+
+// messages: [{key, name, username, avatar, text}] -> {matched, added}
+function addMessages(messages) {
+  if (spinning) { pending.push(...messages); return { matched: 0, added: 0 }; }
+  const phraseNorm = normalize($('phrase').value);
+  const known = new Map([...participants, ...removed].map(p => [p.key, p]));
+  let matched = 0, added = 0;
+  for (const m of messages) {
+    if (phraseNorm && !hasPhrase(m.text || '', phraseNorm)) continue;
+    matched++;
+    let p = known.get(m.key);
+    if (!p) {
+      p = { key: m.key, name: m.name, username: m.username, avatar: null, count: 0 };
+      known.set(m.key, p); participants.push(p); added++;
+    }
+    p.count++;
+    p.name = m.name || p.name;
+    p.avatar = m.avatar || p.avatar;
+  }
+  if (matched && !renderTimer) renderTimer = setTimeout(() => { renderTimer = 0; render(); }, 400);
+  return { matched, added };
+}
+
+/* ---------- сбор из Telegram ---------- */
+async function collect(append) {
+  const url = $('url').value.trim();
+  if (!url) return setStatus('Вставьте ссылку на пост.', true);
+  setBusy(true);
+  setStatus('Собираю комментарии…');
+  const poll = setInterval(async () => {
+    try { setStatus((await (await fetch('/api/progress')).json()).text); } catch {}
+  }, 1000);
+  try {
+    const phrase = $('phrase').value.trim();
+    const res = await fetch('/api/collect?url=' + encodeURIComponent(url));
+    const data = await res.json();
+    clearInterval(poll);
+    if (!res.ok) throw new Error(data.error || 'Ошибка сбора');
+    if (!append) { participants = []; removed = []; page = 0; }
+    const before = participants.length;
+    const { matched, added } = addMessages(data.messages);
+    if (!append || !$('hub').dataset.set) setHub(data.channel.avatar);
+    setStatus(`Комментариев: ${data.messages.length}, ` + (phrase ? `с фразой «${phrase}»: ${matched}, ` : '') +
+              (append ? `новых участников: ${added}` : `уникальных авторов: ${participants.length - before}`) +
+              `. Всего участников: ${participants.length}.`);
+    render();
+  } catch (e) {
+    clearInterval(poll);
+    setStatus(e.message, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+/* ---------- чаты трансляций ---------- */
+// Источник: start(link, onMessages, onError) подключается и возвращает функцию остановки.
+const SOURCES = {
+  twitch: { title: 'Twitch', start: listenTwitch },
+  youtube: { title: 'YouTube', start: listenYoutube },
+};
+const listeners = {};   // id источника -> {stop, count}
+
+function toggleListen(id) {
+  if (listeners[id]) return stopListen(id);
+  const link = $(id + 'Url').value.trim();
+  if (!link) return setStatus(`Вставьте ссылку на трансляцию ${SOURCES[id].title}.`, true);
+  saved(id + 'Url', link);
+  const state = listeners[id] = { count: 0, stop: () => {} };
+  showListen(id, 'подключение…');
+  setStreamHub(id, link);
+  setStatus(`${SOURCES[id].title}: подключаюсь к чату…`);
+  state.stop = SOURCES[id].start(link,
+    messages => {
+      if (listeners[id] !== state) return;
+      state.count += messages.length;
+      addMessages(messages);
+      showListen(id, `сообщений: ${state.count}`);
+    },
+    error => {
+      if (listeners[id] !== state) return;
+      stopListen(id);
+      setStatus(`${SOURCES[id].title}: ${error}`, true);
+    },
+    () => { if (listeners[id] !== state) return; showListen(id, `сообщений: ${state.count}`); setStatus(`${SOURCES[id].title}: слушаю чат. Участники добавляются по мере сообщений.`); });
+}
+function stopListen(id) {
+  const state = listeners[id];
+  if (!state) return;
+  delete listeners[id];
+  state.stop();
+  showListen(id, '');
+  setStatus(`${SOURCES[id].title}: чат остановлен, сообщений получено: ${state.count}. Всего участников: ${participants.length}.`);
+}
+function showListen(id, text) {
+  const on = !!listeners[id], btn = $(id + 'Btn'), live = $(id + 'Live');
+  btn.textContent = on ? 'Остановить' : 'Слушать чат ' + SOURCES[id].title;
+  btn.classList.toggle('on', on);
+  btn.classList.toggle('primary', !on);
+  live.textContent = text; live.classList.toggle('on', on);
+  $(id + 'Url').disabled = on;
+}
+
+// Twitch отдаёт чат анонимным зрителям по WebSocket (ник justinfan*), история недоступна — только новые сообщения.
+function listenTwitch(link, onMessages, onError, onReady) {
+  const channel = ((link.match(/twitch\.tv\/([A-Za-z0-9_]+)/) || link.match(/^@?([A-Za-z0-9_]+)$/) || [])[1] || '').toLowerCase();
+  if (!channel) { setTimeout(() => onError('нужна ссылка вида twitch.tv/канал'), 0); return () => {}; }
+  let ws, stopped = false, retry = 0;
+  (function connect() {
+    ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+    ws.onopen = () => {
+      ws.send('CAP REQ :twitch.tv/tags');
+      ws.send('PASS SCHMOOPIIE');
+      ws.send('NICK justinfan' + (10000 + Math.floor(Math.random() * 80000)));
+      ws.send('JOIN #' + channel);
+    };
+    ws.onmessage = e => {
+      const messages = [];
+      for (const line of e.data.split('\r\n')) {
+        if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+        if (line.includes(' JOIN #')) { onReady(); continue; }
+        const m = line.match(/^(?:@(\S+) )?:(\w+)!\S+ PRIVMSG #\w+ :(.*)$/);
+        if (!m) continue;
+        const display = ((m[1] || '').match(/(?:^|;)display-name=([^;]*)/) || [])[1];
+        messages.push({ key: 'twitch:' + m[2], name: display || m[2], username: m[2], avatar: null, text: m[3] });
+      }
+      if (messages.length) onMessages(messages);
+    };
+    ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 3000); };   // обрыв связи — переподключаемся
+  })();
+  return () => { stopped = true; clearTimeout(retry); ws.close(); };
+}
+
+// YouTube: чат читает локальный сервер (страница сама не может из-за ограничений браузера), мы его опрашиваем.
+function listenYoutube(link, onMessages, onError, onReady) {
+  let stopped = false, timer = 0;
+  const seen = new Set();
+  const api = async (path, params) => {
+    const res = await fetch(path + '?' + new URLSearchParams(params));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'ошибка');
+    return data;
+  };
+  (async () => {
+    try {
+      let { key, ver, continuation } = await api('/api/yt/open', { url: link });
+      if (stopped) return;
+      onReady();
+      let failures = 0, first = true;
+      while (!stopped) {
+        let data;
+        try { data = await api('/api/yt/next', { key, ver, cont: continuation }); failures = 0; }
+        catch (e) { if (++failures >= 5) throw e; data = { messages: [], continuation, timeoutMs: 5000 }; }
+        if (stopped) return;
+        const fresh = data.messages.filter(m => !seen.has(m.id) && seen.add(m.id));
+        if (fresh.length && !first) onMessages(fresh);   // первый ответ — сообщения до начала прослушивания
+        first = false;
+        if (!data.continuation) throw new Error('трансляция закончилась или чат закрыт');
+        continuation = data.continuation;
+        await new Promise(r => { timer = setTimeout(r, Math.min(data.timeoutMs || 5000, 5000)); });
+      }
+    } catch (e) { if (!stopped) onError(e.message); }
+  })();
+  return () => { stopped = true; clearTimeout(timer); };
+}
+
+/* ---------- вкладки ---------- */
+function setMode(mode) {
+  const stream = mode === 'stream';
+  $('tgBar').hidden = stream; $('streamBar').hidden = !stream;
+  $('tabTg').classList.toggle('active', !stream); $('tabStream').classList.toggle('active', stream);
+  saved('mode', mode);
+  if (!participants.length && !Object.keys(listeners).length) {
+    setStatus(stream ? 'Вставьте ссылку на трансляцию и нажмите «Слушать чат».'
+                     : 'Вставьте ссылку на пост и нажмите «Собрать заново».');
+  }
+}
+
+function setBusy(b) { $('collect').disabled = $('append').disabled = b; }
+function setStatus(text, err) { $('status').textContent = text; $('status').classList.toggle('err', !!err); }
+function setHub(url, kind = 'tg') {   // kind: чья аватарка в центре — 'tg' (канал Telegram) или 'stream' (стример)
+  const hub = $('hub');
+  hub.style.backgroundImage = url ? `url("${encodeURI(url)}")` : '';
+  hub.textContent = url ? '' : '🎁';
+  hub.dataset.set = url ? kind : '';
+}
+// В центр колеса ставится аватарка стримера из первой ссылки, чат которой начали слушать.
+async function setStreamHub(id, link) {
+  if ($('hub').dataset.set === 'stream') return;
+  try {
+    const data = await (await fetch('/api/avatar?' + new URLSearchParams({ source: id, link }))).json();
+    if (data.avatar && $('hub').dataset.set !== 'stream') setHub(data.avatar, 'stream');
+  } catch {}
+}
+
+/* ---------- список ---------- */
+function avatarEl(p) {
+  if (p.avatar) {
+    const img = document.createElement('img');
+    img.className = 'ava'; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.alt = '';
+    img.src = p.avatar;
+    img.onerror = () => img.replaceWith(letterEl(p));
+    return img;
+  }
+  return letterEl(p);
+}
+function letterEl(p) {
+  const d = document.createElement('div');
+  d.className = 'ava';
+  d.textContent = [...(p.name || '?')][0].toUpperCase();
+  d.style.background = COLORS[hash(p.key) % COLORS.length];
+  return d;
+}
+function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) >>> 0; return h; }
+
+// Значки площадок по началу ключа участника ("twitch:логин", "yt:idКанала").
+const SOURCE_BADGES = {
+  twitch: { title: 'Из чата Twitch', svg: '<svg viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#9146ff"/>' +
+    '<path d="M4.5 3.5H12v5.2l-2.2 2.2H8l-1.6 1.6v-1.6H4.5z" fill="#fff"/>' +
+    '<path d="M7.5 5.4v2.3M9.8 5.4v2.3" stroke="#9146ff" stroke-width="1.1"/></svg>' },
+  yt: { title: 'Из чата YouTube', svg: '<svg viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#f00"/>' +
+    '<path d="M6.3 4.8v6.4L11.6 8z" fill="#fff"/></svg>' },
+};
+
+function lotEl(p, isRemoved) {
+  const row = document.createElement('div'); row.className = 'lot';
+  const who = document.createElement('div'); who.className = 'who';
+  const name = document.createElement('div'); name.className = 'name'; name.textContent = p.name || '(без имени)';
+  who.append(name);
+  if (p.username) { const u = document.createElement('div'); u.className = 'user'; u.textContent = '@' + p.username; who.append(u); }
+  const ava = document.createElement('span'); ava.className = 'avawrap';
+  ava.append(avatarEl(p));
+  const source = SOURCE_BADGES[p.key.split(':')[0]];
+  if (source) {                      // значок площадки, с которой пришёл участник
+    const badge = document.createElement('span'); badge.className = 'srcbadge';
+    badge.title = source.title; badge.innerHTML = source.svg;
+    ava.append(badge);
+  }
+  row.append(ava, who);
+  if (p.count > 1) {
+    const b = document.createElement('span'); b.className = 'badge'; b.textContent = '×' + p.count;
+    b.title = 'Комментариев: ' + p.count + ' (на шансы не влияет)'; row.append(b);
+  }
+  const btn = document.createElement('button');
+  btn.className = 'icon' + (isRemoved ? ' back' : '');
+  btn.textContent = isRemoved ? '↩' : '🗑';
+  btn.title = isRemoved ? 'Вернуть в розыгрыш' : 'Убрать из розыгрыша';
+  btn.disabled = spinning;
+  btn.onclick = () => isRemoved ? move(p, removed, participants) : move(p, participants, removed);
+  row.append(btn);
+  return row;
+}
+function move(p, from, to) {
+  if (spinning) return;
+  const i = from.indexOf(p);
+  if (i < 0) return;
+  from.splice(i, 1); to.push(p);
+  render();
+}
+
+function render() {
+  const pages = Math.max(1, Math.ceil(participants.length / PAGE_SIZE));
+  page = Math.min(page, pages - 1);
+  $('count').textContent = participants.length;
+  const list = $('list');
+  list.replaceChildren(...participants.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(p => lotEl(p, false)));
+  if (!participants.length) {
+    const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Пока никого нет';
+    list.append(e);
+  }
+  list.scrollTop = 0;
+  $('pager').hidden = pages < 2;
+  $('pageInfo').textContent = `${page + 1} / ${pages}`;
+  $('prev').disabled = page === 0; $('next').disabled = page === pages - 1;
+  $('removedBox').hidden = !removed.length;
+  $('removedTitle').textContent = `Убранные (${removed.length})`;
+  $('removedList').replaceChildren(...removed.map(p => lotEl(p, true)));
+  $('spin').disabled = spinning || participants.length < 2;
+  $('manualAdd').disabled = spinning;
+  if (!participants.includes(winner)) winner = null;
+  $('again').classList.toggle('off', spinning || !winner || participants.length < 3);
+  if (!spinning) $('current').textContent = '';
+  drawWheel();
+}
+
+/* ---------- колесо ---------- */
+const canvas = $('wheel'), ctx = canvas.getContext('2d');
+const images = new Map();   // url -> HTMLImageElement | null (не загрузилась)
+let redrawTimer = 0;
+
+function wheelImage(url) {
+  if (images.has(url)) return images.get(url);
+  const img = new Image();
+  img.referrerPolicy = 'no-referrer';
+  img.onload = () => { clearTimeout(redrawTimer); redrawTimer = setTimeout(drawWheel, 80); };
+  img.onerror = () => images.set(url, null);
+  img.src = url;
+  images.set(url, img);
+  return img;
+}
+
+function fitText(text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  const chars = [...text];
+  while (chars.length > 1 && ctx.measureText(chars.join('') + '…').width > maxWidth) chars.pop();
+  return chars.join('') + '…';
+}
+
+function drawWheel() {
+  const S = canvas.width, c = S / 2, R = c - 4, n = participants.length;
+  ctx.clearRect(0, 0, S, S);
+  if (!n) {
+    ctx.fillStyle = '#1f2330'; ctx.beginPath(); ctx.arc(c, c, R, 0, TAU); ctx.fill();
+    return;
+  }
+  const arc = TAU / n;
+  const withAvatars = n <= WHEEL_AVATAR_MAX;
+  const rimArc = arc * R * 0.86;                         // длина дуги сектора у края
+  const avaSize = withAvatars ? Math.min(rimArc * 0.72, 64) : 0;
+  const fontSize = Math.min(34, rimArc * 0.5);
+  const textOuter = R - 22 - (avaSize ? avaSize + 12 : 0);
+  const textInner = R * 0.27;
+  ctx.save(); ctx.translate(c, c);
+  for (let i = 0; i < n; i++) {
+    const p = participants[i];
+    let color = COLORS[i % COLORS.length];
+    if (i === n - 1 && n > 2 && color === COLORS[0]) color = COLORS[COLORS.length >> 1]; // стык последнего с первым
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, R, i * arc, (i + 1) * arc); ctx.closePath();
+    ctx.fillStyle = color; ctx.fill();
+    if (n <= 400) { ctx.strokeStyle = '#0e101655'; ctx.lineWidth = 2; ctx.stroke(); }
+
+    ctx.save(); ctx.rotate((i + 0.5) * arc);
+    if (avaSize >= 14) {
+      const x = R - 16 - avaSize / 2, r = avaSize / 2;
+      const img = p.avatar ? wheelImage(p.avatar) : null;
+      ctx.save(); ctx.beginPath(); ctx.arc(x, 0, r, 0, TAU); ctx.closePath();
+      if (img && img.complete && img.naturalWidth) { ctx.clip(); ctx.drawImage(img, x - r, -r, avaSize, avaSize); }
+      else {
+        ctx.fillStyle = '#00000040'; ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = `700 ${r}px "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText([...(p.name || '?')][0].toUpperCase(), x, 1);
+      }
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(x, 0, r, 0, TAU); ctx.strokeStyle = '#ffffffcc'; ctx.lineWidth = 3; ctx.stroke();
+    }
+    if (fontSize >= 9) {
+      ctx.font = `600 ${fontSize}px "Segoe UI", sans-serif`;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#10121a';
+      ctx.fillText(fitText(p.name || '?', textOuter - textInner), textOuter, 1);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function setRotation(r) { rotation = r; canvas.style.transform = `rotate(${r}rad)`; }
+function indexAtPointer() {           // стрелка справа, на угле 0
+  const n = participants.length;
+  const a = ((-rotation % TAU) + TAU) % TAU;
+  return Math.min(n - 1, Math.floor(a / (TAU / n)));
+}
+function secureRandom(n) {            // равномерное целое [0, n) без смещения
+  const limit = Math.floor(0x100000000 / n) * n, buf = new Uint32Array(1);
+  do crypto.getRandomValues(buf); while (buf[0] >= limit);
+  return buf[0] % n;
+}
+
+// Доля пройденного пути от доли времени: сначала полная скорость (CRUISE времени),
+// затем скорость плавно падает как cos^3 — мягкий спад и долгая остановка в конце.
+const CRUISE = 0.2;
+function spinEase(t) {
+  const k = (1 - CRUISE) * 2 / Math.PI, total = CRUISE + k * 2 / 3;
+  if (t <= CRUISE) return t / total;
+  const s = Math.sin((t - CRUISE) / (1 - CRUISE) * Math.PI / 2);
+  return (CRUISE + k * (s - s * s * s / 3)) / total;   // интеграл cos^3
+}
+
+function spin() {
+  const n = participants.length;
+  if (spinning || n < 2) return;
+  for (const id of Object.keys(listeners)) stopListen(id);   // на время розыгрыша приём участников закрыт
+  spinning = true; winner = null;
+  render();
+  const arc = TAU / n;
+  const target = secureRandom(n);                         // победитель определён до анимации
+  const within = 0.12 + 0.76 * (secureRandom(1000) / 1000); // точка остановки внутри сектора
+  const want = ((-(target + within) * arc) % TAU + TAU) % TAU;
+  const cur = (rotation % TAU + TAU) % TAU;
+  const sec = spinSeconds();
+  const start = rotation, delta = ((want - cur + TAU) % TAU) + TAU * Math.max(3, Math.round(sec * 0.9));
+  playMusic();
+  // колесо стартует через секунду, чтобы плеер YouTube успел начать играть
+  const t0 = performance.now() + MUSIC_DELAY_MS;
+  let last = -1;
+  const pointer = $('pointer');
+  function frame(now) {
+    const t = Math.min(1, Math.max(0, now - t0) / (sec * 1000));
+    setRotation(start + delta * spinEase(t));
+    const i = indexAtPointer();
+    if (i !== last) {
+      last = i; $('current').textContent = participants[i].name;
+      pointer.classList.remove('tick'); void pointer.offsetWidth; pointer.classList.add('tick');
+    }
+    if (t < 1) return requestAnimationFrame(frame);
+    spinning = false;
+    winner = participants[target];
+    addMessages(pending.splice(0));
+    render();
+    $('current').textContent = winner.name;
+    showWinner(winner);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- настройки: длительность и музыка ---------- */
+function spinSeconds() {
+  const v = parseFloat($('dur').value);
+  return Math.min(300, Math.max(1, Number.isFinite(v) ? v : DEFAULT_SPIN_SEC));
+}
+function saved(key, value) {          // запоминаем настройки в браузере; без хранилища просто не запоминаем
+  try {
+    if (value === undefined) return localStorage.getItem(key) || '';
+    localStorage.setItem(key, value);
+  } catch {}
+  return '';
+}
+
+let ytStart = 0;
+function setMusic() {
+  const url = $('yt').value.trim();
+  const id = (url.match(/(?:youtu\.be\/|[?&]v=|\/(?:embed|shorts|live)\/)([\w-]{11})/) || [])[1];
+  ytStart = +((url.match(/[?&](?:t|start)=(\d+)/) || [])[1] || 0);
+  $('ytBox').hidden = !id;
+  $('ytClear').hidden = !url;
+  $('yt').style.borderColor = url && !id ? 'var(--danger)' : '';
+  const src = id ? `https://www.youtube.com/embed/${id}?enablejsapi=1&playsinline=1&rel=0&start=${ytStart}` : 'about:blank';
+  if ($('ytFrame').getAttribute('src') !== src) $('ytFrame').src = src;
+  saved('yt', url);
+}
+function ytCommand(func, args = []) {  // управление встроенным плеером YouTube через postMessage
+  if ($('ytBox').hidden) return;
+  $('ytFrame').contentWindow.postMessage(JSON.stringify({ event: 'command', func, args }), 'https://www.youtube.com');
+}
+function playMusic() {
+  ytCommand('seekTo', [ytStart, true]);
+  ytCommand('playVideo');
+}
+
+/* ---------- победитель ---------- */
+const fx = $('fx'), fxc = fx.getContext('2d');
+const EMOJI = ['🎉', '🎊', '✨', '⭐', '🎁', '🥳', '🎈'].map(ch => {   // заранее отрисованные спрайты
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.font = '48px "Segoe UI Emoji", sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(ch, 32, 34);
+  return c;
+});
+let fxFrame = 0, sparks = [], flakes = [];
+
+function showWinner(p) {
+  $('winAva').replaceChildren(avatarEl(p));
+  $('winName').textContent = p.name || '(без имени)';
+  $('winUser').textContent = p.username ? '@' + p.username : '';
+  $('overlay').hidden = false;
+  startFx();
+}
+function hideWinner() {
+  $('overlay').hidden = true;
+  ytCommand('pauseVideo');
+  cancelAnimationFrame(fxFrame);
+  sparks = []; flakes = [];
+}
+
+function startFx() {            // салюты и эмодзи-конфетти, пока окно не закроют
+  cancelAnimationFrame(fxFrame);
+  const W = fx.width = fx.clientWidth, H = fx.height = fx.clientHeight;
+  sparks = [];
+  flakes = Array.from({ length: 28 }, () => newFlake(W, H, true));
+  let nextBurst = 0, prev = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+    fxc.clearRect(0, 0, W, H);
+    if (now >= nextBurst) {
+      nextBurst = now + 450 + Math.random() * 650;
+      const x = W * (0.12 + Math.random() * 0.76), y = H * (0.1 + Math.random() * 0.45);
+      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      for (let i = 0; i < 44; i++) {
+        const a = Math.random() * TAU, v = 90 + Math.random() * 260;
+        sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, color });
+      }
+    }
+    for (const s of sparks) {
+      s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 160 * dt; s.vx *= 0.985; s.vy *= 0.985; s.life -= dt * 0.75;
+      fxc.globalAlpha = Math.max(0, s.life); fxc.fillStyle = s.color;
+      fxc.fillRect(s.x - 2.5, s.y - 2.5, 5, 5);
+    }
+    sparks = sparks.filter(s => s.life > 0);
+    fxc.globalAlpha = 1;
+    for (const f of flakes) {
+      f.y += f.vy * dt; f.rot += f.spin * dt; f.sway += dt * 2;
+      if (f.y > H + 40) Object.assign(f, newFlake(W, H, false));
+      const cos = Math.cos(f.rot), sin = Math.sin(f.rot);
+      fxc.setTransform(cos, sin, -sin, cos, f.x + Math.sin(f.sway) * 24, f.y);
+      fxc.drawImage(f.img, -f.size / 2, -f.size / 2, f.size, f.size);
+    }
+    fxc.setTransform(1, 0, 0, 1, 0, 0);
+    fxFrame = requestAnimationFrame(frame);
+  }
+  fxFrame = requestAnimationFrame(frame);
+}
+function newFlake(W, H, anywhere) {
+  return { x: Math.random() * W, y: anywhere ? Math.random() * H : -40, vy: 60 + Math.random() * 110,
+           rot: Math.random() * TAU, spin: (Math.random() - 0.5) * 3, sway: Math.random() * TAU,
+           size: 30 + Math.random() * 26, img: EMOJI[Math.floor(Math.random() * EMOJI.length)] };
+}
+
+/* ---------- события ---------- */
+$('collect').onclick = () => collect(false);
+$('append').onclick = () => collect(true);
+$('tabTg').onclick = () => setMode('tg');
+$('tabStream').onclick = () => setMode('stream');
+for (const id of Object.keys(SOURCES)) {
+  $(id + 'Btn').onclick = () => toggleListen(id);
+  $(id + 'Url').onkeydown = e => { if (e.key === 'Enter') toggleListen(id); };
+}
+$('clear').onclick = () => {
+  if (spinning) return;
+  participants = []; removed = []; page = 0;
+  setHub(null);
+  render();
+};
+$('url').onkeydown = e => { if (e.key === 'Enter') collect(participants.length > 0 && e.shiftKey); };
+$('spin').onclick = spin;
+$('prev').onclick = () => { page--; render(); };
+$('next').onclick = () => { page++; render(); };
+$('overlay').onclick = hideWinner;
+$('again').onclick = () => {
+  if (winner) move(winner, participants, removed);
+  spin();
+};
+function addManual() {
+  const name = $('manual').value.trim();
+  if (!name || spinning) return;
+  participants.push({ key: 'manual:' + (++manualSeq) + ':' + name, name, username: null, avatar: null, count: 1 });
+  $('manual').value = '';
+  page = Math.ceil(participants.length / PAGE_SIZE) - 1;
+  render();
+}
+$('manualAdd').onclick = addManual;
+function restoreSaved() {
+  $('dur').value = saved('dur') || DEFAULT_SPIN_SEC;
+  for (const id of Object.keys(SOURCES)) if (!listeners[id]) $(id + 'Url').value = saved(id + 'Url');
+  $('yt').value = saved('yt');
+  setMusic();
+}
+addEventListener('pageshow', () => setTimeout(restoreSaved, 0));
+$('dur').onchange = () => { $('dur').value = spinSeconds(); saved('dur', $('dur').value); };
+setMode(saved('mode') === 'stream' ? 'stream' : 'tg');
+$('yt').onchange = setMusic;
+$('ytClear').onclick = () => { $('yt').value = ''; setMusic(); };
+restoreSaved();
+$('manual').onkeydown = e => { if (e.key === 'Enter') addManual(); };
+
+render();
+</script>
+</body>
+</html>
