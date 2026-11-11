@@ -26,9 +26,9 @@
   button:active:not(:disabled) { transform: translateY(0) scale(.98); }
   button:disabled { opacity: .45; cursor: default; }
   .primary { background: linear-gradient(135deg, var(--accent), #a855f7); }
-  input[type=text] { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+  input[type=text], input[type=password] { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
                      padding: 10px 12px; outline: none; min-width: 0; transition: border-color .15s, box-shadow .15s; }
-  input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #7c5cff33; }
+  input[type=text]:focus, input[type=password]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #7c5cff33; }
 
   .app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; height: 100vh; padding: 18px; }
   /* clip: углы вращающегося квадратного холста не должны создавать прокрутку страницы */
@@ -52,6 +52,20 @@
   .tabs { display: flex; gap: 6px; padding: 10px 10px 0; }
   .tab { flex: 1; padding: 8px; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
   .tab.active { color: var(--text); background: linear-gradient(135deg, var(--accent), #a855f7); box-shadow: none; }
+  .tab.gear { flex: none; width: 42px; font-size: 17px; padding: 6px 0; }
+  /* панель авторизации занимает место списка участников */
+  .side.auth-open > :not(.tabs):not(.auth):not(.author) { display: none !important; }
+  .auth { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; font-size: 14px; }
+  .auth h3 { margin: 0; font-size: 16px; }
+  .auth p { margin: 0; }
+  .auth .muted { color: var(--muted); }
+  .auth ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; line-height: 1.45; }
+  .auth code { background: var(--panel2); border-radius: 6px; padding: 1px 6px; font-size: 13px; }
+  .auth .add input { flex: 1; min-width: 0; }
+  .bot-status { color: var(--muted); font-size: 13px; }
+  .bot-status.ok { color: #34d399; }
+  .bot-status.err { color: var(--danger); }
+  #tgDisconnect { align-self: flex-start; font-size: 12px; }
   #clear { font-size: 12px; font-weight: 500; margin-left: 6px; }
   .status { position: absolute; left: 0; top: 0; color: var(--muted); font-size: 14px; }
   .status.err { color: var(--danger); }
@@ -184,8 +198,8 @@
     <div class="top">
       <div class="bar" id="tgBar">
         <input type="text" id="url" name="url" placeholder="Ссылка на пост: https://t.me/канал/123" autocomplete="off">
-        <button id="collect" class="primary" title="Очистить список и собрать с этой ссылки">Собрать заново</button>
-        <button id="append" title="Добавить участников с этой ссылки к уже собранным">Добавить</button>
+        <button id="append" class="primary" title="Добавить авторов комментариев с этой ссылки к списку участников (повторы не дублируются)">Добавить</button>
+        <button id="collect" title="Очистить список участников и добавить заново с этой ссылки">Очистить и добавить</button>
       </div>
       <div class="bar" id="streamBar" hidden>
         <div class="src">
@@ -203,7 +217,7 @@
              title="Если заполнено — участвуют только те, кто написал эту фразу. Без фразы участвуют все, кто написал что угодно. Регистр не важен, русские и английские буквы равнозначны: itr = ИТР = итр">
     </div>
     <div class="wheel-area">
-      <div class="status" id="status">Вставьте ссылку на пост и нажмите «Собрать заново».</div>
+      <div class="status" id="status">Вставьте ссылку на пост и нажмите «Добавить».</div>
       <div class="wheel-box">
         <canvas id="wheel" width="1200" height="1200"></canvas>
         <div class="hub" id="hub">🎁</div>
@@ -214,12 +228,12 @@
         <div class="timer-zone">
           <div class="timer" id="timer">
             <div class="tlabel">До крутки</div>
-            <button class="tdisplay" id="timerDisplay" title="Нажмите, чтобы ввести время: 5 — пять минут, 2:30 — две с половиной">10:00</button>
+            <button class="tdisplay" id="timerDisplay" title="Нажмите, чтобы ввести время: 5 — пять минут, 2:30 или 2,5 — две с половиной">10:00</button>
             <input type="text" id="timerInput" name="timerInput" hidden autocomplete="off"
                    title="Минуты (5) или минуты:секунды (2:30). Enter — применить, Esc — отмена">
             <div class="tbtns">
               <button id="timerMinus" title="Убавить минуту">−1 мин</button>
-              <button id="timerToggle" class="primary" title="Запустить отсчёт — на нуле барабан закрутится сам">▶</button>
+              <button id="timerToggle" class="primary" title="Запустить отсчёт">▶</button>
               <button id="timerPlus" title="Добавить минуту">+1 мин</button>
             </div>
             <button class="treset" id="timerReset" disabled title="Остановить и вернуть время, с которого начинали">↺ Сброс</button>
@@ -241,6 +255,28 @@
     <div class="tabs">
       <button class="tab" id="tabTg" title="Собрать участников из комментариев к посту Telegram">Телеграм</button>
       <button class="tab" id="tabStream" title="Собирать участников из чатов идущих трансляций">Стриминги</button>
+      <button class="tab gear" id="tabAuth" title="Авторизация: бот для закрытых каналов Telegram">⚙</button>
+    </div>
+    <div class="auth" id="authPanel" hidden>
+      <h3>Закрытые каналы Telegram</h3>
+      <p class="muted">Публичные каналы собираются без настройки. Для закрытого канала подключите своего бота:</p>
+      <ol>
+        <li>В Telegram откройте <b>@BotFather</b>, отправьте <code>/newbot</code>, задайте боту имя и логин.</li>
+        <li>Скопируйте токен из ответа BotFather и вставьте в поле ниже.</li>
+        <li>В настройках канала откройте <b>Обсуждение</b> — группу комментариев — и добавьте бота в её
+          <b>администраторы</b>. Права можно оставить выключенными.</li>
+        <li>Сделайте это <b>до публикации поста</b>: бот видит только комментарии, написанные после его добавления.</li>
+        <li>Запускайте Крутку хотя бы раз в сутки, пока идёт сбор: Telegram хранит сообщения для бота 24 часа.</li>
+        <li>На посте выберите «Копировать ссылку» (вида <code>t.me/c/1234567890/55</code>) и вставьте её
+          во вкладке «Телеграм».</li>
+      </ol>
+      <div class="add">
+        <input type="password" id="tgToken" name="tgToken" placeholder="Токен бота: 1234567890:AAH…" autocomplete="off"
+               title="Токен хранится только в этом браузере на вашем компьютере">
+        <button class="primary" id="tgConnect" title="Проверить токен и подключить бота">Подключить</button>
+      </div>
+      <div class="bot-status" id="tgBotStatus">Бот не подключён.</div>
+      <button class="icon" id="tgDisconnect" hidden title="Отключить бота и забыть токен">Отключить бота</button>
     </div>
     <div class="side-head">
       <div class="side-title">Участники
@@ -310,27 +346,48 @@ const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e'
 // Разные латинские написания одного звука сводим к одному виду.
 const LATIN_VARIANTS = [['shch', 'sch'], ['kh', 'h'], ['x', 'ks'], ['w', 'v'], ['j', 'i'], ['y', 'i']];
 
-function normalize(text) {      // слова в нижнем регистре и латинице через пробел: 'ИТР!' -> 'itr'
+function normalize(text) {      // слова в нижнем регистре через пробел, русские буквы — латиницей: 'ИТР!' -> 'itr'
   let t = [...text.toLowerCase()].map(ch => TRANSLIT[ch] ?? ch).join('');
   for (const [from, to] of LATIN_VARIANTS) t = t.replaceAll(from, to);
-  return (t.match(/[a-z0-9]+/g) || []).join(' ');
+  return (t.match(/[\p{L}\p{N}]+/gu) || []).join(' ');   // буквы любых алфавитов (украинские, латиница с ё…)
 }
-function hasPhrase(text, phraseNorm) {   // фраза целыми словами, а не частью другого слова
-  return ` ${normalize(text)} `.includes(` ${phraseNorm} `);
+// Проверка «сообщение содержит фразу» или null, если фраза не задана.
+// Фраза из слов ищется целыми словами; фраза без букв и цифр («+», «🎁») — как есть, подстрокой.
+function phraseMatcher(phrase) {
+  phrase = phrase.trim();
+  if (!phrase) return null;
+  const norm = normalize(phrase);
+  if (norm) return text => ` ${normalize(text)} `.includes(` ${norm} `);
+  const raw = phrase.toLowerCase();
+  return text => text.toLowerCase().includes(raw);
 }
 
 /* ---------- участники из сообщений (общее для всех источников) ---------- */
 let pending = [];       // сообщения, пришедшие во время вращения колеса
 let listRenderTimer = 0;   // отложенная перерисовка списка при потоке сообщений
 
-// messages: [{key, name, username, avatar, text}] -> {matched, added}
+// Отложенная перерисовка: пока курсор над списком, ждём — иначе строки пересоздаются под мышью и клик теряется.
+function scheduleRender() {
+  if (listRenderTimer) return;
+  listRenderTimer = setTimeout(function again() {
+    if (document.querySelector('.side .list:hover, #removedBox:hover')) { listRenderTimer = setTimeout(again, 400); return; }
+    listRenderTimer = 0;
+    render();
+  }, 400);
+}
+
+// messages: [{key, name, username, avatar, text, uid?}] -> {matched, added}
+// Уже засчитанные сообщения (uid): повторное «Добавить» с той же ссылки не увеличивает счётчики.
+let countedUids = new Set();
+
 function addMessages(messages) {
   if (spinning) { pending.push(...messages); return { matched: 0, added: 0 }; }
-  const phraseNorm = normalize($('phrase').value);
+  const matches = phraseMatcher($('phrase').value);
   const known = new Map([...participants, ...removed].map(p => [p.key, p]));
   let matched = 0, added = 0;
   for (const m of messages) {
-    if (phraseNorm && !hasPhrase(m.text || '', phraseNorm)) continue;
+    if (matches && !matches(m.text || '')) continue;
+    if (m.uid) { if (countedUids.has(m.uid)) continue; countedUids.add(m.uid); }
     matched++;
     let p = known.get(m.key);
     if (!p) {
@@ -341,40 +398,160 @@ function addMessages(messages) {
     p.name = m.name || p.name;
     p.avatar = m.avatar || p.avatar;
   }
-  if (matched && !listRenderTimer) listRenderTimer = setTimeout(() => { listRenderTimer = 0; render(); }, 400);
+  if (matched) scheduleRender();
   return { matched, added };
 }
 
 /* ---------- сбор из Telegram ---------- */
+let collecting = false;   // идёт сбор — второй не запускаем, крутить нельзя
 async function collect(append) {
+  if (collecting || spinning) return;
   const url = $('url').value.trim();
   if (!url) return setStatus('Вставьте ссылку на пост.', true);
+  const isPrivate = PRIVATE_POST_RE.test(url);
   setBusy(true);
   setStatus('Собираю комментарии…');
+  let polling = !isPrivate;                    // прогресс сервера есть только у сбора публичного поста
   const poll = setInterval(async () => {
-    try { setStatus((await (await fetch('/api/progress')).json()).text); } catch {}
+    try {
+      const text = (await (await fetch('/api/progress')).json()).text;
+      if (polling && text) setStatus(text);   // ответ, пришедший после конца сбора, не затирает итог
+    } catch {}
   }, 1000);
+  const stopPoll = () => { polling = false; clearInterval(poll); };
   try {
     const phrase = $('phrase').value.trim();
-    const res = await fetch('/api/collect?url=' + encodeURIComponent(url));
-    const data = await res.json();
-    clearInterval(poll);
-    if (!res.ok) throw new Error(data.error || 'Ошибка сбора');
-    if (!append) { participants = []; removed = []; page = 0; }
-    const before = participants.length;
+    let data;
+    if (isPrivate) data = await collectPrivate(url);
+    else {
+      const res = await fetch('/api/collect?url=' + encodeURIComponent(url));
+      data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка сбора');
+    }
+    stopPoll();
+    if (!append) { participants = []; removed = []; page = 0; countedUids = new Set(); $('list').scrollTop = 0; }
     const { matched, added } = addMessages(data.messages);
-    if (!append || !$('hub').dataset.set) setHub(data.channel.avatar);
-    setStatus(`Комментариев: ${data.messages.length}, ` + (phrase ? `с фразой «${phrase}»: ${matched}, ` : '') +
-              (append ? `новых участников: ${added}` : `уникальных авторов: ${participants.length - before}`) +
-              `. Всего участников: ${participants.length}.`);
+    if (!append || !$('hub').dataset.set) {
+      if (data.channel.avatar?.startsWith('/api/')) {          // аватарка через бота может отсутствовать
+        if (!append) setHub(null);
+        const img = new Image(); img.onload = () => setHub(data.channel.avatar); img.src = data.channel.avatar;
+      } else setHub(data.channel.avatar);
+    }
+    // matched — сколько комментариев засчитано сейчас (повторы с прошлых нажатий не считаются)
+    setStatus(`Комментариев по ссылке: ${data.messages.length}, засчитано новых` +
+              (phrase ? ` с фразой «${phrase}»` : '') + `: ${matched}, новых участников: ${added}. ` +
+              `Всего участников: ${participants.length}.` + (data.warning ? ` ⚠ ${data.warning}` : ''), !!data.warning);
     render();
   } catch (e) {
-    clearInterval(poll);
+    stopPoll();
     setStatus(e.message, true);
   } finally {
     setBusy(false);
   }
 }
+
+/* ---------- закрытые каналы Telegram через бота ---------- */
+// Бот получает от Telegram только новые сообщения группы обсуждения; храним их в браузере
+// (offset — с какого сообщения забирать дальше, roots — какой пост канала стоит во главе каждой ветки).
+const PRIVATE_POST_RE = /t\.me\/c\/(\d+)\/(\d+)/;
+const TG_KEEP_DAYS = 30, TG_KEEP_MAX = 15000;
+let tgBot = null, tgSyncing = null;
+
+async function tgPost(path, body) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'ошибка');
+  return data;
+}
+function tgStore() {
+  try { return JSON.parse(saved('tgStore')) || null; } catch { return null; }
+}
+// Забрать у Telegram накопленные сообщения бота. Telegram удаляет пачку, только когда мы просим следующую
+// (offset), поэтому каждую пачку сначала сохраняем и лишь потом просим дальше — обрыв ничего не теряет.
+function tgSync() {
+  if (!tgBot) return Promise.resolve(tgStore());
+  if (tgSyncing) return tgSyncing;
+  tgSyncing = (async () => {
+    const store = tgStore() || { offset: 0, roots: {}, comments: [] };
+    for (let more = true; more;) {
+      const data = await tgPost('/api/tgbot/updates', { offset: store.offset });
+      for (const r of data.roots) store.roots[r.g + ':' + r.m] = { c: r.c, p: r.p };
+      const seen = new Set(store.comments.map(c => c.g + ':' + c.id));
+      // аватарку можно восстановить по ключу, текст длиннее 300 символов фразе не нужен — экономим место
+      store.comments.push(...data.comments.filter(c => !seen.has(c.g + ':' + c.id))
+                                          .map(({ avatar, ...c }) => ({ ...c, text: c.text.slice(0, 300) })));
+      const cutoff = Date.now() / 1000 - TG_KEEP_DAYS * 86400;
+      store.comments = store.comments.filter(c => c.date >= cutoff).slice(-TG_KEEP_MAX);
+      store.offset = data.offset;
+      if (!storeSave('tgStore', JSON.stringify(store))) {
+        throw new Error('Хранилище браузера переполнено — новые комментарии бота не сохранились. ' +
+                        'Очистите данные сайта Крутки в браузере или используйте другой браузер.');
+      }
+      more = data.more;
+    }
+    renderAuth();
+    return store;
+  })().finally(() => { tgSyncing = null; });
+  return tgSyncing;
+}
+function tgAvatar(key) {            // tg:<id> / tgc:<id> -> адрес аватарки через бота
+  const [kind, id] = key.split(':');
+  return `/api/tgbot/photo?${kind === 'tg' ? 'user' : 'chat'}=${id}`;
+}
+async function collectPrivate(url) {
+  if (!tgBot) throw new Error('Это закрытый канал: подключите бота — кнопка ⚙ справа от вкладок.');
+  const m = url.match(PRIVATE_POST_RE);
+  const channelId = Number('-100' + m[1]), postId = Number(m[2]);
+  const store = await tgSync();
+  const threads = new Set(Object.entries(store.roots).filter(([, r]) => r.c === channelId && r.p === postId).map(([k]) => k));
+  if (!threads.size) {
+    throw new Error('Бот пока не видел комментариев к этому посту. Проверьте, что бот — администратор группы ' +
+                    'обсуждения и был добавлен до публикации поста.');
+  }
+  const messages = store.comments
+    .filter(c => threads.has(c.g + ':' + c.t) && c.key !== 'tgc:' + channelId && c.key !== 'tgc:' + c.g)
+    .map(c => ({ ...c, avatar: tgAvatar(c.key), uid: `tgb:${c.g}:${c.id}` }));
+  return { messages, channel: { avatar: `/api/tgbot/photo?chat=${channelId}` } };
+}
+async function tgConnect(token, quiet) {
+  let bot;
+  try {
+    bot = await tgPost('/api/tgbot/connect', { token });
+  } catch (e) {                     // сервер при ошибке оставляет прежнего бота — и мы тоже
+    renderAuth(quiet ? `Бот не подключился: ${e.message}` : e.message);
+    return;
+  }
+  if (tgBot && bot.username !== tgBot.username) {   // другой бот — его очередь сообщений начинается заново
+    const store = tgStore();
+    if (store) { store.offset = 0; storeSave('tgStore', JSON.stringify(store)); }
+  }
+  tgBot = bot;
+  saved('tgToken', token);
+  $('tgToken').value = '';
+  renderAuth();
+  try { await tgSync(); } catch (e) { renderAuth(e.message); }
+}
+async function tgDisconnect() {
+  try { await tgPost('/api/tgbot/disconnect', {}); } catch {}
+  tgBot = null;
+  saved('tgToken', '');
+  renderAuth();
+}
+function renderAuth(error) {
+  const st = $('tgBotStatus');
+  const count = (tgStore()?.comments || []).length;
+  st.className = 'bot-status' + (error ? ' err' : tgBot ? ' ok' : '');
+  st.textContent = error || (tgBot ? `Подключён бот @${tgBot.username}. Сохранено комментариев: ${count}.`
+                                   : 'Бот не подключён.');
+  $('tgDisconnect').hidden = !tgBot;
+  $('tgToken').placeholder = tgBot ? 'Новый токен — чтобы сменить бота' : 'Токен бота: 1234567890:AAH…';
+}
+function toggleAuth(open) {
+  $('authPanel').hidden = !open;
+  document.querySelector('.side').classList.toggle('auth-open', open);
+  $('tabAuth').classList.toggle('active', open);
+}
+setInterval(() => { if (tgBot) tgSync().catch(e => renderAuth(e.message)); }, 60000);   // пока Крутка открыта
 
 /* ---------- чаты трансляций ---------- */
 // Источник: start(link, onMessages, onError) подключается и возвращает функцию остановки.
@@ -425,10 +602,13 @@ function showListen(id, text) {
 }
 
 // Twitch отдаёт чат анонимным зрителям по WebSocket (ник justinfan*), история недоступна — только новые сообщения.
+// Популярные чат-боты каналов — не участники.
+const TWITCH_BOTS = new Set(['nightbot', 'streamelements', 'moobot', 'fossabot', 'streamlabs', 'wizebot', 'botrixoficial',
+                             'sery_bot', 'soundalerts', 'pokemoncommunitygame', 'commanderroot', 'blerp']);
 function listenTwitch(link, onMessages, onError, onReady) {
   const channel = ((link.match(/twitch\.tv\/([A-Za-z0-9_]+)/) || link.match(/^@?([A-Za-z0-9_]+)$/) || [])[1] || '').toLowerCase();
   if (!channel) { setTimeout(() => onError('нужна ссылка вида twitch.tv/канал'), 0); return () => {}; }
-  let ws, stopped = false, retry = 0;
+  let ws, stopped = false, retry = 0, joined = false;
   (function connect() {
     ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
     ws.onopen = () => {
@@ -441,17 +621,23 @@ function listenTwitch(link, onMessages, onError, onReady) {
       const messages = [];
       for (const line of e.data.split('\r\n')) {
         if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
-        if (line.includes(' JOIN #')) { onReady(); continue; }
         const m = line.match(/^(?:@(\S+) )?:(\w+)!\S+ PRIVMSG #\w+ :(.*)$/);
-        if (!m) continue;
-        const display = ((m[1] || '').match(/(?:^|;)display-name=([^;]*)/) || [])[1];
-        messages.push({ key: 'twitch:' + m[2], name: display || m[2], username: m[2], avatar: null, text: m[3] });
+        if (m) {
+          if (TWITCH_BOTS.has(m[2])) continue;
+          const display = ((m[1] || '').match(/(?:^|;)display-name=([^;]*)/) || [])[1];
+          messages.push({ key: 'twitch:' + m[2], name: display || m[2], username: m[2], avatar: null, text: m[3] });
+        } else if (/^(?:@\S+ )?:\w+!\S+ JOIN #\w+$/.test(line) || / 366 /.test(line)) {
+          joined = true; onReady();
+        }
       }
       if (messages.length) onMessages(messages);
     };
     ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 3000); };   // обрыв связи — переподключаемся
   })();
-  return () => { stopped = true; clearTimeout(retry); ws.close(); };
+  const joinTimeout = setTimeout(() => {
+    if (!joined && !stopped) onError('не удалось подключиться к чату. Проверьте ссылку на канал.');
+  }, 15000);
+  return () => { stopped = true; clearTimeout(retry); clearTimeout(joinTimeout); ws.close(); };
 }
 
 // YouTube: чат читает локальный сервер (страница сама не может из-за ограничений браузера), мы его опрашиваем.
@@ -495,11 +681,15 @@ function setMode(mode) {
   saved('mode', mode);
   if (!participants.length && !Object.keys(listeners).length) {
     setStatus(stream ? 'Вставьте ссылку на трансляцию и нажмите «Слушать чат».'
-                     : 'Вставьте ссылку на пост и нажмите «Собрать заново».');
+                     : 'Вставьте ссылку на пост и нажмите «Добавить».');
   }
 }
 
-function setBusy(b) { $('collect').disabled = $('append').disabled = b; }
+function setBusy(b) {
+  collecting = b;
+  $('collect').disabled = $('append').disabled = b || spinning;
+  $('spin').disabled = b || spinning || participants.length < 2;
+}
 function setStatus(text, err) { $('status').textContent = text; $('status').classList.toggle('err', !!err); }
 function setHub(url, kind = 'tg') {   // kind: чья аватарка в центре — 'tg' (канал Telegram) или 'stream' (стример)
   const hub = $('hub');
@@ -553,7 +743,8 @@ function lotEl(p, isRemoved) {
   if (p.username) { const u = document.createElement('div'); u.className = 'user'; u.textContent = '@' + p.username; who.append(u); }
   const ava = document.createElement('span'); ava.className = 'avawrap';
   ava.append(avatarEl(p));
-  const source = SOURCE_BADGES[p.key.split(':')[0]];
+  const prefix = p.key.split(':')[0];
+  const source = Object.hasOwn(SOURCE_BADGES, prefix) ? SOURCE_BADGES[prefix] : null;
   if (source) {                      // значок площадки, с которой пришёл участник
     const badge = document.createElement('span'); badge.className = 'srcbadge';
     badge.title = source.title; badge.innerHTML = source.svg;
@@ -591,14 +782,14 @@ function render() {
     const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Пока никого нет';
     list.append(e);
   }
-  list.scrollTop = 0;
   $('pager').hidden = pages < 2;
   $('pageInfo').textContent = `${page + 1} / ${pages}`;
   $('prev').disabled = page === 0; $('next').disabled = page === pages - 1;
   $('removedBox').hidden = !removed.length;
   $('removedTitle').textContent = `Убранные (${removed.length})`;
   $('removedList').replaceChildren(...removed.map(p => lotEl(p, true)));
-  $('spin').disabled = spinning || participants.length < 2;
+  $('spin').disabled = spinning || collecting || participants.length < 2;
+  $('collect').disabled = $('append').disabled = spinning || collecting;
   $('manualAdd').disabled = spinning;
   if (!participants.includes(winner)) winner = null;
   $('again').classList.toggle('off', spinning || !winner || participants.length < 3);
@@ -715,8 +906,10 @@ function fmtTime(sec) {
   const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60, p = n => String(n).padStart(2, '0');
   return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 }
-function parseTime(text) {                   // "5" — минуты, "2:30" — мин:сек, "1:00:00" — ч:мин:сек
-  const parts = text.trim().replace(/[.,]/g, ':').split(':');
+function parseTime(text) {                   // "5" — минуты, "2,5" — 2½ минуты, "2:30" — мин:сек, "1:00:00" — ч:мин:сек
+  text = text.trim();
+  if (/^\d+[.,]\d+$/.test(text)) return Math.min(Math.round(parseFloat(text.replace(',', '.')) * 60), TIMER_MAX_SEC);
+  const parts = text.split(':');
   if (parts.length > 3 || !parts.every(p => /^\d+$/.test(p.trim()))) return null;
   const n = parts.map(Number);
   const sec = n.length === 1 ? n[0] * 60 : n.length === 2 ? n[0] * 60 + n[1] : n[0] * 3600 + n[1] * 60 + n[2];
@@ -740,6 +933,7 @@ function setTimerMs(ms) {                    // новое время; идёт 
   if (timerDeadline) timerDeadline = Date.now() + ms;
   else timerLeftMs = ms;
   if (!timerStarted) { timerSet = Math.ceil(ms / 1000); saved('timer', timerSet); }
+  if (ms > 0) timerAlert = false;            // время снова есть — кнопка больше не мигает
   renderTimer();
   if (timerDeadline && ms === 0) timerFinished();
 }
@@ -765,21 +959,22 @@ function timerFinished() {
 }
 function editTimer() {
   const input = $('timerInput');
-  input.value = fmtTime(Math.ceil(timerRemainingMs() / 1000));
+  input.value = input.dataset.initial = fmtTime(Math.ceil(timerRemainingMs() / 1000));
   $('timerDisplay').hidden = true; input.hidden = false;
   input.focus(); input.select();
 }
 function finishEditTimer(apply) {
   const input = $('timerInput');
   if (input.hidden) return;
-  const sec = apply ? parseTime(input.value) : null;
+  // без правки ничего не применяем — иначе идущий таймер откатился бы к моменту клика
+  const sec = apply && input.value.trim() !== input.dataset.initial ? parseTime(input.value) : null;
   input.hidden = true; $('timerDisplay').hidden = false;
   if (sec !== null) setTimerMs(sec * 1000);
 }
 
 function spin() {
   const n = participants.length;
-  if (spinning || n < 2) return;
+  if (spinning || collecting || n < 2 || !$('overlay').hidden) return;
   if (timerAlert) { timerAlert = false; renderTimer(); }      // крутку запустили — кнопка больше не мигает
   for (const id of Object.keys(listeners)) stopListen(id);   // на время розыгрыша приём участников закрыт
   spinning = true; winner = null;
@@ -827,6 +1022,9 @@ function saved(key, value) {          // запоминаем настройки
   } catch {}
   return '';
 }
+function storeSave(key, value) {      // запись, о неудаче которой нужно знать (переполнение хранилища)
+  try { localStorage.setItem(key, value); return true; } catch { return false; }
+}
 
 let ytStart = 0;
 function setMusic() {
@@ -861,6 +1059,7 @@ const EMOJI = ['🎉', '🎊', '✨', '⭐', '🎁', '🥳', '🎈'].map(ch => {
 let fxFrame = 0, sparks = [], flakes = [];
 
 function showWinner(p) {
+  document.activeElement?.blur();   // фокус не остаётся на кнопке под окном
   $('winAva').replaceChildren(avatarEl(p));
   $('winName').textContent = p.name || '(без имени)';
   $('winUser').textContent = p.username ? '@' + p.username : '';
@@ -920,27 +1119,39 @@ function newFlake(W, H, anywhere) {
 /* ---------- события ---------- */
 $('collect').onclick = () => collect(false);
 $('append').onclick = () => collect(true);
-$('tabTg').onclick = () => setMode('tg');
-$('tabStream').onclick = () => setMode('stream');
+$('tabTg').onclick = () => { toggleAuth(false); setMode('tg'); };
+$('tabStream').onclick = () => { toggleAuth(false); setMode('stream'); };
+$('tabAuth').onclick = () => toggleAuth($('authPanel').hidden);
+$('tgConnect').onclick = () => { const t = $('tgToken').value.trim(); if (t) tgConnect(t); };
+$('tgToken').onkeydown = e => { if (e.key === 'Enter') $('tgConnect').click(); };
+$('tgDisconnect').onclick = tgDisconnect;
+if (saved('tgToken')) tgConnect(saved('tgToken'), true); else renderAuth();
 for (const id of Object.keys(SOURCES)) {
   $(id + 'Btn').onclick = () => toggleListen(id);
   $(id + 'Url').onkeydown = e => { if (e.key === 'Enter') toggleListen(id); };
 }
 $('clear').onclick = () => {
   if (spinning) return;
-  participants = []; removed = []; page = 0;
+  participants = []; removed = []; page = 0; countedUids = new Set();
   setHub(null);
   render();
 };
-$('url').onkeydown = e => { if (e.key === 'Enter') collect(participants.length > 0 && e.shiftKey); };
+$('url').onkeydown = e => { if (e.key === 'Enter') collect(true); };   // Enter — основное действие «Добавить»
 $('spin').onclick = spin;
-$('prev').onclick = () => { page--; render(); };
-$('next').onclick = () => { page++; render(); };
+$('prev').onclick = () => { page--; render(); $('list').scrollTop = 0; };
+$('next').onclick = () => { page++; render(); $('list').scrollTop = 0; };
 $('overlay').onclick = hideWinner;
 $('again').onclick = () => {
+  if (spinning || collecting || !$('overlay').hidden) return;
   if (winner) move(winner, participants, removed);
   spin();
 };
+// Пока открыто окно победителя, Enter/пробел/Esc только закрывают его (а не нажимают кнопку под ним).
+document.addEventListener('keydown', e => {
+  if ($('overlay').hidden || !['Enter', ' ', 'Escape'].includes(e.key)) return;
+  e.preventDefault();
+  hideWinner();
+}, true);
 function addManual() {
   const name = $('manual').value.trim();
   if (!name || spinning) return;

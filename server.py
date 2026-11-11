@@ -17,12 +17,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP_NAME = "Крутка Vilknz (Vilknz prize wheel)"
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 APP_ID = "vilknz-prize-wheel"
 HOST, PORT = "127.0.0.1", 8765
 PORT_TRIES = 20  # если 8765 занят чужой программой, пробуем следующие порты
 # В собранном exe (PyInstaller) файлы лежат во временной папке sys._MEIPASS.
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+FROZEN = hasattr(sys, "_MEIPASS")
+PAGE_CACHE = (ROOT / "index.html").read_bytes() if FROZEN else None  # из исходников читаем каждый раз (удобно править)
+ICON_BYTES = (ROOT / "assets" / "icon.ico").read_bytes()
 PAGE_LIMIT = 100     # комментариев на один запрос к виджету (максимум у t.me)
 MAX_REQUESTS = 600   # предохранитель от бесконечного цикла
 REQUEST_PAUSE = 0.3  # пауза между запросами, сек
@@ -41,6 +44,9 @@ USER_RE = re.compile(r'<div class="tgme_widget_message_user">(.*?)</div>', re.S)
 IMG_RE = re.compile(r'<img src="(https?://[^"]+)"')
 TAG_RE = re.compile(r"<[^>]+>")
 TEXT_RE = re.compile(r'js-message_text"[^>]*>(.*?)</div>', re.S)
+BR_RE = re.compile(r"<br\s*/?>", re.I)
+HEADER_COUNT_RE = re.compile(r'js-header">\s*([\d,\s]+?)\s+comment')
+DELETED_ACCOUNT = "Deleted Account"
 
 YT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
          "Chrome/126.0 Safari/537.36")
@@ -83,17 +89,31 @@ def parse_comments(page):
             "username": href_m.group(1) if href_m else None,
             "color": color_m.group(1) if color_m else "",
             "avatar": html.unescape(img_m.group(1)) if img_m else None,
-            "text": html.unescape(TAG_RE.sub(" ", text_m.group(1))) if text_m else "",
+            "text": html.unescape(TAG_RE.sub("", BR_RE.sub(" ", text_m.group(1)))) if text_m else "",
         })
     return comments
 
 
+def fetch_retry(url, tries=3):
+    """fetch с повтором при сетевой ошибке или таймауте (кроме ответов-ошибок вроде 404)."""
+    for attempt in range(tries):
+        try:
+            return fetch(url)
+        except urllib.error.HTTPError:
+            raise
+        except OSError:  # URLError, таймаут, обрыв соединения
+            if attempt == tries - 1:
+                raise
+            time.sleep(2 * (attempt + 1))
+
+
 def fetch_comments_page(url):
-    """Страница комментариев с повтором: t.me иногда отдаёт её с пустыми авторами."""
+    """Страница комментариев (комментарии, html) с повтором: t.me иногда отдаёт её с пустыми авторами."""
     for wait in (*RETRY_WAITS, None):
-        comments = parse_comments(fetch(url))
+        page = fetch_retry(url)
+        comments = parse_comments(page)
         if all(c["name"] for c in comments):
-            return comments
+            return comments, page
         if wait is None:
             break
         for left in range(wait, 0, -1):
@@ -103,12 +123,30 @@ def fetch_comments_page(url):
 
 
 def collect_comments(channel, post_id):
-    """Собирает все комментарии поста, листая виджет назад от самых новых."""
+    """Собирает все комментарии поста, листая виджет назад от самых новых.
+
+    Возвращает (комментарии, предупреждение или None). Если сбор оборвался посередине, собранное
+    не выбрасывается, а возвращается с предупреждением.
+    """
     base = f"https://t.me/{channel}/{post_id}?embed=1&discussion=1&comments_limit={PAGE_LIMIT}"
     by_id = {}
     anchor = None
+    expected = None
+    warning = None
     for _ in range(MAX_REQUESTS):
-        found = fetch_comments_page(base + (f"&comment={anchor}" if anchor else ""))
+        try:
+            found, page = fetch_comments_page(base + (f"&comment={anchor}" if anchor else ""))
+        except OSError as e:
+            if not by_id:
+                raise
+            warning = f"сбор оборвался ({e}), учтены не все комментарии — нажмите «Добавить» ещё раз позже"
+            break
+        if expected is None:
+            m = HEADER_COUNT_RE.search(page)
+            expected = int(re.sub(r"\D", "", m.group(1))) if m else 0
+            if not found:
+                raise ValueError("Комментариев не найдено. Проверьте ссылку: нужен пост публичного канала "
+                                 "с включёнными комментариями.")
         new = [c for c in found if c["id"] not in by_id]
         for c in new:
             by_id[c["id"]] = c
@@ -119,15 +157,19 @@ def collect_comments(channel, post_id):
             break
         anchor = oldest
         time.sleep(REQUEST_PAUSE)
-    return [by_id[i] for i in sorted(by_id)]
+    if not warning and expected and len(by_id) < expected:
+        warning = f"Telegram показывает {expected} комментариев, а собрано {len(by_id)}"
+    return [by_id[i] for i in sorted(by_id)], warning
 
 
 def comment_key(c, channel):
-    """Ключ уникального автора комментария; None — комментарий от имени самого канала."""
+    """Ключ уникального автора комментария; None — от имени самого канала или удалённый аккаунт."""
     if c["username"]:
         if c["username"].lower() == channel.lower():
             return None
         return "@" + c["username"].lower()
+    if c["name"] == DELETED_ACCOUNT:
+        return None  # удалённые аккаунты неразличимы и не могут получить приз
     # Без ника публичного ID нет: различаем по имени и цвету имени (он зависит от ID).
     return f"{c['name']}|{c['color']}"
 
@@ -153,12 +195,13 @@ def collect(url):
     channel, post_id = parse_post_url(url)
     progress["text"] = "Собираю комментарии…"
     messages = []
-    for c in collect_comments(channel, post_id):
+    comments, warning = collect_comments(channel, post_id)
+    for c in comments:
         key = comment_key(c, channel)
         if key:
-            messages.append({"key": key, "name": c["name"], "username": c["username"],
-                             "avatar": c["avatar"], "text": c["text"]})
-    return {"channel": {"username": channel, **channel_info(channel)}, "messages": messages}
+            messages.append({"uid": f"tgw:{channel.lower()}:{c['id']}", "key": key, "name": c["name"],
+                             "username": c["username"], "avatar": c["avatar"], "text": c["text"]})
+    return {"channel": {"username": channel, **channel_info(channel)}, "messages": messages, "warning": warning}
 
 
 # ---------- чат трансляции YouTube ----------
@@ -203,10 +246,12 @@ def yt_video_id(url):
     url = (url or "").strip()
     m = YT_ID_RE.search(url)
     if not m:
-        if "youtube.com/" not in url:
+        parsed = urllib.parse.urlparse(url if "://" in url else "https://" + url)
+        host = (parsed.hostname or "").lower()
+        if host != "youtube.com" and not host.endswith(".youtube.com"):
             raise ValueError("Нужна ссылка на трансляцию YouTube.")
         # ссылка на канал (youtube.com/@канал/live): берём трансляцию, которая идёт сейчас
-        page = fetch(url if url.startswith("http") else "https://" + url, YT_HEADERS)
+        page = fetch(f"https://www.youtube.com{parsed.path}", YT_HEADERS)
         m = re.search(r'<link rel="canonical" href="https://www\.youtube\.com/watch\?v=([\w-]{11})"', page)
         if not m:
             raise ValueError("На этом канале сейчас нет трансляции.")
@@ -243,11 +288,11 @@ def yt_next(key, ver, continuation):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, body, ctype):
+    def _send(self, code, body, ctype, cache=False):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -255,26 +300,78 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(data, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8")
 
+    def _own_hosts(self):
+        port = self.server.server_address[1]
+        return {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+    def _api_allowed(self):
+        """Запрос к /api пришёл со страницы Крутки, а не с чужого сайта в браузере.
+
+        Host отсекает DNS-rebinding (чужое имя, указывающее на 127.0.0.1); Sec-Fetch-Site отсекает
+        запросы, которые чужая страница шлёт к нам картинками, формами или fetch.
+        """
+        if self.headers.get("Host", "") not in self._own_hosts():
+            return False
+        return self.headers.get("Sec-Fetch-Site", "same-origin") in ("same-origin", "none")
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/") and not self._api_allowed():
+            return self._json(403, {"error": "Запрос не со страницы Крутки"})
         if parsed.path == "/":
-            self._send(200, (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
+            self._send(200, PAGE_CACHE or (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
         elif parsed.path == "/favicon.ico":
-            self._send(200, (ROOT / "assets" / "icon.ico").read_bytes(), "image/x-icon")
+            self._send(200, ICON_BYTES, "image/x-icon", cache=True)
         elif parsed.path == "/api/progress":
             self._json(200, progress)
+        elif parsed.path == "/api/tgbot/photo":
+            query = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+            kind = "user" if "user" in query else "chat"
+            ident = query.get(kind, "")
+            if not isinstance(ident, str):
+                ident = ""
+            data = tg_photo(kind, ident) if re.fullmatch(r"-?\d+", ident) and tg_bot["token"] else None
+            if data:
+                self._send(200, data, "image/jpeg", cache=True)
+            else:
+                self._send(404, b"no photo", "text/plain")
         elif parsed.path in API:
             query = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
-            try:
-                self._json(200, API[parsed.path](query))
-            except ValueError as e:
-                self._json(400, {"error": str(e)})
-            except urllib.error.URLError as e:
-                self._json(502, {"error": f"Не удалось получить данные: {e.reason}"})
-            except OSError as e:
-                self._json(502, {"error": str(e)})
+            self._call(API[parsed.path], query)
         else:
             self._send(404, b"not found", "text/plain")
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path not in POST_API:
+            return self._send(404, b"not found", "text/plain")
+        # Только со своей страницы: чужой сайт в браузере не должен управлять ботом. JSON-тип запроса
+        # заставляет браузер спрашивать разрешение (CORS), а мы его не даём; Origin проверяем явно.
+        origin = self.headers.get("Origin")
+        own_origins = {f"http://{h}" for h in self._own_hosts()}
+        if (not self._api_allowed() or (origin and origin not in own_origins)
+                or self.headers.get("Content-Type", "").split(";")[0] != "application/json"):
+            return self._json(403, {"error": "Запрос не со страницы Крутки"})
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return self._json(400, {"error": "Неверный запрос"})
+        self._call(POST_API[path], body)
+
+    def _call(self, func, arg):
+        try:
+            self._json(200, func(arg))
+        except ValueError as e:
+            self._json(400, {"error": str(e)})
+        except urllib.error.URLError as e:
+            self._json(502, {"error": f"Не удалось получить данные: {e.reason}"})
+        except OSError as e:
+            self._json(502, {"error": str(e)})
+        except Exception as e:  # noqa: BLE001 — сайт поменял формат ответа и т. п.: странице нужна понятная ошибка
+            self._json(500, {"error": f"Неожиданный ответ сайта ({type(e).__name__}). Возможно, сайт изменился — "
+                                      "сообщите автору Крутки."})
 
     def log_message(self, fmt, *args):
         pass
@@ -295,6 +392,147 @@ def stream_avatar(source, link):
     except (ValueError, AttributeError, OSError):
         pass
     return None
+
+
+# ---------- бот Telegram для закрытых каналов ----------
+# Пользователь создаёт своего бота и делает его администратором группы обсуждения канала.
+# Bot API не отдаёт историю: бот получает только новые сообщения, Telegram хранит их для него 24 часа.
+# Сервер лишь пересказывает их странице, а копит и фильтрует по посту страница (в хранилище браузера).
+# Токен держим только в памяти и никогда не кладём в адреса страницы.
+TG_TOKEN_RE = re.compile(r"\d{5,}:[\w-]{30,}", re.ASCII)
+tg_bot = {"token": None, "photos": {}}
+tg_lock = threading.Lock()
+
+
+def tg_api(method, **params):
+    token = tg_bot["token"]
+    if not token:
+        raise ValueError("Бот не подключён: откройте ⚙ справа от вкладок и вставьте токен.")
+    body = urllib.parse.urlencode(
+        {k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in params.items()}).encode()
+    try:
+        raw = fetch(f"https://api.telegram.org/bot{token}/{method}", data=body)
+    except urllib.error.HTTPError as e:
+        try:
+            description = json.loads(e.read() or b"{}").get("description", "")
+        except ValueError:
+            description = ""
+        if e.code in (401, 404):
+            raise ValueError("Telegram не принял токен — проверьте, что скопировали его целиком.")
+        if e.code == 409:
+            raise ValueError("Этого бота уже опрашивает другая программа или у него включён вебхук. "
+                             "Создайте для Крутки отдельного бота.")
+        raise ValueError(f"Telegram: {description or e.code}")
+    return json.loads(raw)["result"]
+
+
+def tg_person(m):
+    """Автор сообщения: человек или канал, от имени которого написан комментарий."""
+    chat = m.get("sender_chat")
+    if chat and chat["id"] == m["chat"]["id"]:
+        return None  # анонимный администратор группы обсуждения
+    if chat:
+        return {"key": f"tgc:{chat['id']}", "name": chat.get("title", ""), "username": chat.get("username"),
+                "avatar": f"/api/tgbot/photo?chat={chat['id']}"}
+    user = m.get("from") or {}
+    if not user or user.get("is_bot"):
+        return None
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")]))
+    return {"key": f"tg:{user['id']}", "name": name, "username": user.get("username"),
+            "avatar": f"/api/tgbot/photo?user={user['id']}"}
+
+
+def tg_root(m):
+    """Если сообщение — пост канала, автоматически пересланный в группу обсуждения: (id канала, id поста)."""
+    if not m.get("is_automatic_forward"):
+        return None
+    origin = m.get("forward_origin") or {}
+    if origin.get("type") == "channel":
+        return origin["chat"]["id"], origin["message_id"], origin["chat"].get("title", "")
+    if m.get("forward_from_chat"):
+        return m["forward_from_chat"]["id"], m.get("forward_from_message_id"), m["forward_from_chat"].get("title", "")
+    return None
+
+
+def tg_parse(updates):
+    roots, comments = [], []
+    for update in updates:
+        m = update.get("message")
+        if not m:
+            continue
+        group = m["chat"]["id"]
+        for candidate in (m, m.get("reply_to_message") or {}):
+            root = tg_root(candidate) if candidate else None
+            if root:
+                roots.append({"g": group, "m": candidate["message_id"], "c": root[0], "p": root[1], "title": root[2]})
+        thread = m.get("message_thread_id") or (m.get("reply_to_message") or {}).get("message_id")
+        person = None if tg_root(m) or not thread else tg_person(m)
+        if person:
+            comments.append({**person, "g": group, "t": thread, "id": m["message_id"], "date": m.get("date", 0),
+                             "text": m.get("text") or m.get("caption") or ""})
+    return roots, comments
+
+
+def tg_connect(token):
+    token = (token or "").strip()
+    if not TG_TOKEN_RE.fullmatch(token):
+        raise ValueError("Это не похоже на токен бота. Он выглядит так: 1234567890:AAH…")
+    with tg_lock:
+        previous = dict(tg_bot)
+        tg_bot.update(token=token, photos={})
+        try:
+            me = tg_api("getMe")
+            if tg_api("getWebhookInfo").get("url"):
+                raise ValueError("У этого бота включён вебхук — создайте для Крутки отдельного бота.")
+        except Exception:
+            tg_bot.update(previous)  # прежний бот продолжает работать
+            raise
+    return {"username": me.get("username"), "name": me.get("first_name")}
+
+
+def tg_updates(offset):
+    """Одна пачка (до 100) накопленных для бота сообщений начиная с offset.
+
+    Запрос с offset подтверждает Telegram получение всех предыдущих — и он их удаляет. Поэтому за раз
+    берём одну пачку: страница сохраняет её и только потом просит следующую (more=True).
+    """
+    offset = int(offset or 0)
+    with tg_lock:
+        updates = tg_api("getUpdates", offset=offset, limit=100, timeout=0, allowed_updates=["message"])
+    roots, comments = tg_parse(updates)
+    next_offset = updates[-1]["update_id"] + 1 if updates else offset
+    return {"offset": next_offset, "roots": roots, "comments": comments, "more": len(updates) == 100}
+
+
+def tg_photo(kind, ident):
+    """Аватарка пользователя или канала (байты jpg) или None. Кэшируется до перезапуска."""
+    key = f"{kind}:{ident}"
+    if key in tg_bot["photos"]:
+        return tg_bot["photos"][key]
+    data = None
+    try:
+        if kind == "user":
+            sizes = (tg_api("getUserProfilePhotos", user_id=int(ident), limit=1).get("photos") or [[]])[0]
+            file_id = sizes[0]["file_id"] if sizes else None
+        else:
+            file_id = (tg_api("getChat", chat_id=int(ident)).get("photo") or {}).get("small_file_id")
+        if file_id:
+            path = tg_api("getFile", file_id=file_id)["file_path"]
+            req = urllib.request.Request(f"https://api.telegram.org/file/bot{tg_bot['token']}/{path}",
+                                         headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = resp.read()
+    except (ValueError, OSError, KeyError):
+        return None  # временный сбой — попробуем снова при следующем запросе
+    tg_bot["photos"][key] = data
+    return data
+
+
+POST_API = {
+    "/api/tgbot/connect": lambda b: tg_connect(str(b.get("token") or "")),
+    "/api/tgbot/disconnect": lambda b: tg_bot.update(token=None, photos={}) or {"ok": True},
+    "/api/tgbot/updates": lambda b: tg_updates(b.get("offset")),
+}
 
 
 API = {
@@ -337,8 +575,9 @@ CONSOLE_TEXT = """
 
 def is_our_app(port):
     """Отвечает ли на этом порту уже запущенная копия программы (а не чужая)."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # localhost не через прокси
     try:
-        with urllib.request.urlopen(f"http://{HOST}:{port}/api/ping", timeout=2) as resp:
+        with opener.open(f"http://{HOST}:{port}/api/ping", timeout=2) as resp:
             return json.load(resp).get("app") == APP_ID
     except (OSError, ValueError):
         return False
